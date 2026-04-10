@@ -1,0 +1,13 @@
+# Robots.txt for Tutok Pitik Studios
+# Allow all search engines to crawl the site
+
+User-agent: *
+Allow: /
+
+# Disallow admin and user-specific areas from search engines
+Disallow: /admin
+Disallow: /dashboard
+Disallow: /profile
+
+# Sitemap location
+Sitemap: https://tutokpitikstudios.netlify.app/sitemap.xml

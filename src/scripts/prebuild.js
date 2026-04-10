@@ -1,0 +1,38 @@
+import fs from 'fs';
+import path from 'path';
+
+const publicDir = path.resolve(process.cwd(), 'public');
+const formsHtml = path.join(publicDir, 'forms.html');
+
+if (!fs.existsSync(publicDir)) {
+  fs.mkdirSync(publicDir, { recursive: true });
+}
+
+const formTemplate = `<!DOCTYPE html>
+<html>
+<head>
+  <title>Forms - Tutok Pitik Studios</title>
+</head>
+<body>
+  <form name="booking" method="POST" data-netlify="true" netlify-honeypot="bot-field" hidden>
+    <input type="hidden" name="form-name" value="booking" />
+    <input type="hidden" name="bot-field" />
+    <input type="text" name="firstName" />
+    <input type="text" name="lastName" />
+    <input type="email" name="email" />
+    <input type="tel" name="phone" />
+    <input type="text" name="location" />
+    <input type="text" name="service" />
+    <input type="text" name="date" />
+    <input type="text" name="startTime" />
+    <input type="text" name="endTime" />
+    <input type="text" name="duration" />
+    <input type="text" name="hourlyRate" />
+    <input type="text" name="totalPrice" />
+    <textarea name="message"></textarea>
+  </form>
+</body>
+</html>`;
+
+fs.writeFileSync(formsHtml, formTemplate);
+console.log('✓ Netlify forms template created');
