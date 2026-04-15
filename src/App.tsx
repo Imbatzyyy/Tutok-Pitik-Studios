@@ -14,6 +14,7 @@ import Auth from './components/Auth';
 import UserProfile from './components/UserProfile';
 import AdminDashboard from './components/AdminDashboard';
 import LoadingScreen from './components/LoadingScreen';
+import ResetPasswordPage from './components/ResetPasswordPage';
 import { supabase } from './lib/supabase';
 import type { User } from './lib/types';
 import './styles/globals.css';
@@ -194,6 +195,10 @@ export default function App() {
   const handleLoadingComplete = () => {
     setIsLoading(false);
   };
+
+  if (window.location.pathname === '/reset-password') {
+    return <ResetPasswordPage />;
+  }
 
   if (isLoading) {
     return <LoadingScreen onLoadingComplete={handleLoadingComplete} />;

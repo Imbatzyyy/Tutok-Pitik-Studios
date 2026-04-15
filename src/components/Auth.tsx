@@ -1,6 +1,6 @@
 import React, { useState } from 'react';
 import { X, Eye, EyeOff, User, Mail, Lock, Camera, AlertCircle, KeyRound, Check } from 'lucide-react';
-import { supabase, projectId, publicAnonKey } from '../lib/supabase';
+import { supabase, projectId } from '../lib/supabase';
 
 interface AuthProps {
   isOpen: boolean;
@@ -107,22 +107,24 @@ export default function Auth({ isOpen, onClose, onSuccess, defaultView }: AuthPr
       // Wait for database trigger to create profile
       await new Promise(resolve => setTimeout(resolve, 1500));
 
-      // Send welcome email
+      // Send welcome email only when Supabase returns a signed-in session token.
       const fullName = `${formData.firstName} ${formData.lastName}`;
-      try {
-        await fetch(
-          `https://${projectId}.supabase.co/functions/v1/make-server-032fda65/send-welcome-email`,
-          {
-            method: 'POST',
-            headers: {
-              'Content-Type': 'application/json',
-              'Authorization': `Bearer ${publicAnonKey}`,
-            },
-            body: JSON.stringify({ email: formData.email, fullName }),
-          }
-        );
-      } catch (emailError) {
-        console.error('Welcome email error:', emailError);
+      if (data.session?.access_token) {
+        try {
+          await fetch(
+            `https://${projectId}.supabase.co/functions/v1/make-server-032fda65/send-welcome-email`,
+            {
+              method: 'POST',
+              headers: {
+                'Content-Type': 'application/json',
+                'Authorization': `Bearer ${data.session.access_token}`,
+              },
+              body: JSON.stringify({ fullName }),
+            }
+          );
+        } catch (emailError) {
+          console.error('Welcome email error:', emailError);
+        }
       }
 
       const userSession = {
@@ -265,26 +267,15 @@ export default function Auth({ isOpen, onClose, onSuccess, defaultView }: AuthPr
     }
 
     try {
-      // Send password reset email via server
-      const response = await fetch(
-        `https://${projectId}.supabase.co/functions/v1/make-server-032fda65/send-password-reset-email`,
-        {
-          method: 'POST',
-          headers: {
-            'Content-Type': 'application/json',
-            'Authorization': `Bearer ${publicAnonKey}`,
-          },
-          body: JSON.stringify({ email: resetEmail }),
-        }
-      );
+      const { error } = await supabase.auth.resetPasswordForEmail(resetEmail, {
+        redirectTo: `${window.location.origin}/reset-password`,
+      });
 
-      const data = await response.json();
-
-      if (response.ok) {
+      if (error) {
+        setErrors({ general: error.message || 'Failed to send reset email' });
+      } else {
         setForgotPasswordStep('success');
         setErrors({ success: 'Password reset instructions have been sent to your email!' });
-      } else {
-        setErrors({ general: data.error || 'Failed to send reset email' });
       }
     } catch (error: any) {
       console.error('Password reset error:', error);
@@ -377,13 +368,13 @@ export default function Auth({ isOpen, onClose, onSuccess, defaultView }: AuthPr
               {forgotPasswordStep === 'email' && 'Forgot Password'}
               {forgotPasswordStep === 'verify' && 'Verify Code'}
               {forgotPasswordStep === 'reset' && 'Reset Password'}
-              {forgotPasswordStep === 'success' && 'Password Reset Successful'}
+              {forgotPasswordStep === 'success' && 'Check Your Email'}
             </h2>
             <p>
               {forgotPasswordStep === 'email' && 'Enter your email to receive a verification code'}
               {forgotPasswordStep === 'verify' && 'Enter the 6-digit code sent to your email'}
               {forgotPasswordStep === 'reset' && 'Create a new password for your account'}
-              {forgotPasswordStep === 'success' && 'You can now sign in with your new password'}
+              {forgotPasswordStep === 'success' && 'Use the link in your email to open the secure password reset page'}
             </p>
           </div>
 

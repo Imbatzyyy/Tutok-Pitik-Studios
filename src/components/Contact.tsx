@@ -2,7 +2,7 @@ import React, { useState, useRef } from 'react';
 import { Calendar, Clock, MapPin, DollarSign, Send, X } from 'lucide-react';
 import BookingCalendar from './BookingCalendar';
 import Notification from './Notification';
-import { supabase, projectId, publicAnonKey } from '../lib/supabase';
+import { supabase, projectId } from '../lib/supabase';
 
 interface ContactProps {
   onClose: () => void;
@@ -211,7 +211,7 @@ export default function Contact({ onClose, user }: ContactProps) {
           method: 'POST',
           headers: {
             'Content-Type': 'application/json',
-            'Authorization': `Bearer ${publicAnonKey}`
+            'Authorization': `Bearer ${session.access_token}`
           },
           body: JSON.stringify({ booking: bookingPayload })
         });

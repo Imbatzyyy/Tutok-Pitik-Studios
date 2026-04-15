@@ -1,7 +1,7 @@
 import { useState, useEffect, useRef } from 'react';
 import { X, User, Mail, Calendar, Camera, LogOut, Edit2, Save, Heart, Trash2, Upload, FileText } from 'lucide-react';
 import { portfolioImages } from './Portfolio';
-import { supabase, projectId, publicAnonKey } from '../lib/supabase';
+import { supabase, projectId } from '../lib/supabase';
 
 interface UserProfileProps {
   isOpen: boolean;
@@ -154,7 +154,7 @@ export default function UserProfile({ isOpen, onClose, user, onLogout, onUpdateU
             method: 'POST',
             headers: {
               'Content-Type': 'application/json',
-              'Authorization': `Bearer ${publicAnonKey}`
+              'Authorization': `Bearer ${session.access_token}`
             },
             body: JSON.stringify({
               email: formData.email,

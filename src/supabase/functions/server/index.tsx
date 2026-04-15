@@ -12,14 +12,44 @@ const supabase = createClient(
   Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!
 );
 
+const allowedOrigins = [
+  Deno.env.get('SITE_URL'),
+  'http://localhost:5173',
+  'http://localhost:3000',
+  'http://127.0.0.1:5173',
+  'http://127.0.0.1:3000',
+].filter(Boolean) as string[];
+
+const getAccessToken = (authorization?: string | null) => authorization?.replace(/^Bearer\s+/i, '').trim();
+
+async function requireAuthenticatedUser(c: any) {
+  const accessToken = getAccessToken(c.req.header('Authorization'));
+  if (!accessToken) {
+    return null;
+  }
+
+  const { data: { user }, error } = await supabase.auth.getUser(accessToken);
+  if (error || !user) {
+    return null;
+  }
+
+  return { user, accessToken };
+}
+
 // Enable logger
 app.use('*', logger(console.log));
 
-// Enable CORS for all routes and methods
+// Enable CORS for trusted frontend origins
 app.use(
   "/*",
   cors({
-    origin: "*",
+    origin: (origin) => {
+      if (!origin) {
+        return allowedOrigins[0] || '';
+      }
+
+      return allowedOrigins.includes(origin) ? origin : '';
+    },
     allowHeaders: ["Content-Type", "Authorization"],
     allowMethods: ["GET", "POST", "PUT", "DELETE", "OPTIONS"],
     exposeHeaders: ["Content-Length"],
@@ -39,7 +69,13 @@ app.get("/make-server-032fda65/health", (c) => {
 // 1. Welcome Email - Sent on user signup
 app.post("/make-server-032fda65/send-welcome-email", async (c) => {
   try {
-    const { email, fullName } = await c.req.json();
+    const auth = await requireAuthenticatedUser(c);
+    if (!auth?.user?.email) {
+      return c.json({ error: 'Unauthorized' }, 401);
+    }
+
+    const { fullName } = await c.req.json();
+    const email = auth.user.email;
 
     const RESEND_API_KEY = Deno.env.get('RESEND_API_KEY');
     if (!RESEND_API_KEY) {
@@ -126,6 +162,11 @@ app.post("/make-server-032fda65/send-welcome-email", async (c) => {
 // 2. Booking Confirmation Email - Sent to customer when booking is created
 app.post("/make-server-032fda65/send-booking-email", async (c) => {
   try {
+    const auth = await requireAuthenticatedUser(c);
+    if (!auth?.user?.email) {
+      return c.json({ error: 'Unauthorized' }, 401);
+    }
+
     const { booking } = await c.req.json();
 
     const RESEND_API_KEY = Deno.env.get('RESEND_API_KEY');
@@ -213,7 +254,7 @@ app.post("/make-server-032fda65/send-booking-email", async (c) => {
       },
       body: JSON.stringify({
         from: 'Tutok Pitik Studios <onboarding@resend.dev>',
-        to: [booking.email],
+        to: [auth.user.email],
         subject: '✅ Booking Confirmation - Tutok Pitik Studios',
         html: customerEmailHTML,
       }),
@@ -313,7 +354,7 @@ app.post("/make-server-032fda65/send-booking-email", async (c) => {
       },
       body: JSON.stringify({
         from: 'Tutok Pitik Studios <onboarding@resend.dev>',
-        to: ['admin@tutokpitik.com'], // Replace with actual admin email
+        to: [Deno.env.get('BOOKING_NOTIFICATION_EMAIL') || Deno.env.get('SITE_OWNER_EMAIL') || 'admin@tutokpitik.com'],
         subject: `🔔 New Booking: ${booking.service} - ${new Date(booking.booking_date).toLocaleDateString()}`,
         html: adminEmailHTML,
       }),
@@ -336,92 +377,21 @@ app.post("/make-server-032fda65/send-booking-email", async (c) => {
 
 // 3. Password Reset Email
 app.post("/make-server-032fda65/send-password-reset-email", async (c) => {
-  try {
-    const { email } = await c.req.json();
-
-    const RESEND_API_KEY = Deno.env.get('RESEND_API_KEY');
-    if (!RESEND_API_KEY) {
-      return c.json({ error: 'Email service not configured' }, 500);
-    }
-
-    // Generate password reset link (Supabase handles this)
-    const { data, error } = await supabase.auth.resetPasswordForEmail(email, {
-      redirectTo: `${Deno.env.get('SITE_URL') || 'http://localhost:5173'}/reset-password`,
-    });
-
-    if (error) {
-      console.error('Supabase password reset error:', error);
-      return c.json({ error: error.message }, 400);
-    }
-
-    const emailHTML = `
-<!DOCTYPE html>
-<html>
-<head>
-  <meta charset="UTF-8">
-  <style>
-    body { font-family: 'Inter', Arial, sans-serif; background-color: #000; margin: 0; padding: 0; }
-    .container { max-width: 600px; margin: 0 auto; background-color: #18181b; }
-    .header { background: linear-gradient(135deg, #E63946 0%, #c62e3a 100%); padding: 40px 30px; text-align: center; }
-    .header h1 { color: white; font-size: 28px; margin: 0 0 10px 0; }
-    .content { padding: 40px 30px; color: #e4e4e7; }
-    .button { display: inline-block; background-color: #E63946; color: white; padding: 14px 28px; text-decoration: none; border-radius: 8px; font-weight: 600; margin: 20px 0; }
-    .footer { background-color: #09090b; color: #71717a; text-align: center; padding: 30px; font-size: 12px; }
-  </style>
-</head>
-<body>
-  <div class="container">
-    <div class="header">
-      <h1>🔐 Password Reset Request</h1>
-    </div>
-    <div class="content">
-      <h2 style="color: white;">Hi there!</h2>
-      <p>We received a request to reset your password for your Tutok Pitik Studios account.</p>
-      <p>Click the button below to reset your password. This link will expire in 1 hour.</p>
-      <a href="${Deno.env.get('SITE_URL') || 'http://localhost:5173'}/reset-password" class="button">Reset Password</a>
-      <p style="color: #a1a1aa; font-size: 14px; margin-top: 30px;">If you didn't request this password reset, you can safely ignore this email. Your password will remain unchanged.</p>
-    </div>
-    <div class="footer">
-      <p><strong>Tutok Pitik Studios</strong></p>
-      <p>© ${new Date().getFullYear()} Tutok Pitik Studios. All rights reserved.</p>
-    </div>
-  </div>
-</body>
-</html>`;
-
-    const response = await fetch('https://api.resend.com/emails', {
-      method: 'POST',
-      headers: {
-        'Authorization': `Bearer ${RESEND_API_KEY}`,
-        'Content-Type': 'application/json',
-      },
-      body: JSON.stringify({
-        from: 'Tutok Pitik Studios <onboarding@resend.dev>',
-        to: [email],
-        subject: '🔐 Password Reset - Tutok Pitik Studios',
-        html: emailHTML,
-      }),
-    });
-
-    const emailData = await response.json();
-    
-    if (!response.ok) {
-      console.error('Resend API error:', emailData);
-      return c.json({ error: 'Failed to send email' }, 500);
-    }
-
-    return c.json({ success: true, messageId: emailData.id });
-
-  } catch (error) {
-    console.error('Send password reset email error:', error);
-    return c.json({ error: error.message }, 500);
-  }
+  return c.json({
+    error: 'Deprecated endpoint. Use supabase.auth.resetPasswordForEmail from the client application.'
+  }, 410);
 });
 
 // 4. Profile Update Notification Email
 app.post("/make-server-032fda65/send-profile-update-email", async (c) => {
   try {
-    const { email, fullName, updatedFields } = await c.req.json();
+    const auth = await requireAuthenticatedUser(c);
+    if (!auth?.user?.email) {
+      return c.json({ error: 'Unauthorized' }, 401);
+    }
+
+    const { fullName, updatedFields } = await c.req.json();
+    const email = auth.user.email;
 
     const RESEND_API_KEY = Deno.env.get('RESEND_API_KEY');
     if (!RESEND_API_KEY) {
