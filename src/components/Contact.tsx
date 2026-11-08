@@ -1,857 +1,682 @@
-import React, { useState, useRef } from 'react';
-import { AlertCircle } from 'lucide-react';
+import { useEffect, useMemo, useRef, useState, type FormEvent } from 'react';
+import { CalendarCheck, Check, ImageUp, Info, LoaderCircle, Lock, Mail, MapPin, MessageCircle, Phone, ShieldCheck, Trash2 } from 'lucide-react';
+import { toast } from 'sonner';
 import BookingCalendar from './BookingCalendar';
-import Notification from './Notification';
-import { supabase, projectId } from '../lib/supabase';
+import ConfirmDialog from './common/ConfirmDialog';
+import Modal from './common/Modal';
+import { SERVICE_ICONS } from './Services';
+import { DOWNPAYMENT_RATE, MAX_ACTIVE_BOOKINGS, SERVICES, STUDIO, findService } from '../content/site';
+import { freeEndHours, freeStartHours, hourToTime, isRangeFree, timeToHour, type AvailabilityState } from '../lib/availability';
+import { ACTIVE_STATUSES, bookingReference, buildBookingMessage } from '../lib/bookings';
+import { escapeHtml, formatDateLong, formatPeso, formatPesoExact, formatTime, hoursLabel } from '../lib/format';
+import { compressImage, randomId, RECEIPTS_BUCKET, uploadToBucket } from '../lib/images';
+import { errorMessage, isMissingRelation, notify } from '../lib/api';
+import { supabase } from '../lib/supabase';
 
-interface ContactProps {
-  onSuccess?: (booking: any) => void;
-  user: any;
-  onShowLogin?: () => void;
-  onShowSignup?: () => void;
+export interface BookingPrefill {
+  serviceId?: string;
+  hours?: number;
+  nonce: number;
 }
 
-export default function Contact({ onSuccess, user, onShowLogin, onShowSignup }: ContactProps) {
-  const [selectedDate, setSelectedDate] = useState<string | null>(null);
-  const [startTime, setStartTime] = useState('');
-  const [endTime, setEndTime] = useState('');
-  const [selectedService, setSelectedService] = useState('');
-  const [showCalendar, setShowCalendar] = useState(false);
-  const [showConfirmDialog, setShowConfirmDialog] = useState(false);
-  const [showGuestPrompt, setShowGuestPrompt] = useState(false);
-  const [formDataToSubmit, setFormDataToSubmit] = useState<any>(null);
-  const [paymentReference, setPaymentReference] = useState('');
-  const [paymentReceiptDataUrl, setPaymentReceiptDataUrl] = useState('');
-  const [paymentReceiptName, setPaymentReceiptName] = useState('');
-  const [paymentReceiptError, setPaymentReceiptError] = useState('');
-  const [paymentReceiptPreview, setPaymentReceiptPreview] = useState('');
-  const [notification, setNotification] = useState<{
-    show: boolean;
-    type: 'success' | 'error' | 'info' | 'warning' | 'login';
-    title: string;
-    message: string;
-    showButton?: boolean;
-    buttonText?: string;
-    onButtonClick?: () => void;
-  }>({
-    show: false,
-    type: 'info',
-    title: '',
-    message: ''
-  });
-  const formRef = useRef<HTMLFormElement>(null);
+export interface BookingSuccess {
+  reference: string;
+  service: string;
+  date: string;
+  dateDisplay: string;
+  startTime: string;
+  endTime: string;
+  time: string;
+  hours: number;
+  total: number;
+  downpayment: number;
+  balance: number;
+  location: string;
+  email: string;
+}
 
-  const services = [
-    { value: 'portrait', label: 'Portrait Photography - ₱2,500/hour', rate: 2500 },
-    { value: 'Birthday', label: 'Birthday Photography - ₱1,000/hour', rate: 1000 },
-    { value: 'commercial', label: 'Commercial Photography - ₱4,000/hour', rate: 4000 },
-    { value: 'event', label: 'Event Coverage - ₱1,500/hour', rate: 1500 },
-    { value: 'landscape', label: 'Landscape & Architecture - ₱3,000/hour', rate: 3000 }
-  ];
+interface ContactProps {
+  user: any;
+  availability: AvailabilityState;
+  prefill?: BookingPrefill | null;
+  onSuccess: (booking: BookingSuccess) => void;
+  onRequireAuth: (view: 'signin' | 'signup') => void;
+  onUserUpdated: (user: any) => void;
+}
 
-  const availableTimeSlots = [
-    '08:00', '09:00', '10:00', '11:00', '12:00',
-    '13:00', '14:00', '15:00', '16:00', '17:00',
-    '18:00', '19:00', '20:00'
-  ];
+interface Draft {
+  serviceId: string;
+  date: string | null;
+  start: number | null;
+  hours: number | null;
+  location: string;
+  notes: string;
+  phone: string;
+}
 
+const DRAFT_KEY = 'tps:booking-draft';
+const EMPTY_DRAFT: Draft = { serviceId: '', date: null, start: null, hours: null, location: '', notes: '', phone: '' };
 
-  const BOOKING_META_MARKER = '\n\n---BOOKING_META---\n';
+const loadDraft = (): Draft => {
+  try {
+    const raw = sessionStorage.getItem(DRAFT_KEY);
+    return raw ? { ...EMPTY_DRAFT, ...JSON.parse(raw) } : EMPTY_DRAFT;
+  } catch {
+    return EMPTY_DRAFT;
+  }
+};
 
-  const buildBookingMessage = (plainMessage: string, meta: Record<string, any>) => {
-    const sanitizedMessage = (plainMessage || '').trim();
-    const hasMeta = Object.values(meta).some((value) => value !== undefined && value !== null && value !== '');
+const phoneLooksValid = (value: string) => value.replace(/\D/g, '').length >= 10;
 
-    if (!hasMeta) {
-      return sanitizedMessage;
-    }
+export default function Contact({ user, availability, prefill, onSuccess, onRequireAuth, onUserUpdated }: ContactProps) {
+  const [draft, setDraft] = useState<Draft>(loadDraft);
+  const [reference, setReference] = useState('');
+  const [receipt, setReceipt] = useState<{ blob: Blob; dataUrl: string; name: string } | null>(null);
+  const [receiptBusy, setReceiptBusy] = useState(false);
+  const [errors, setErrors] = useState<Record<string, string>>({});
+  const [confirmOpen, setConfirmOpen] = useState(false);
+  const [authPromptOpen, setAuthPromptOpen] = useState(false);
+  const [submitting, setSubmitting] = useState(false);
+  const submittingRef = useRef(false);
+  const fileRef = useRef<HTMLInputElement>(null);
+  const sectionRef = useRef<HTMLElement>(null);
 
-    return `${sanitizedMessage}${BOOKING_META_MARKER}${JSON.stringify(meta)}`;
-  };
+  const isGuest = !user || user.role === 'guest';
+  const isCustomer = user?.role === 'customer';
+  const isTeam = user && ['superadmin', 'admin', 'staff'].includes(user.role);
+  const accountPhone = (user?.phone || '').trim();
+  const needsPhone = isCustomer && !accountPhone;
 
-  const formatTime = (time: string) => {
-    const [hours, minutes] = time.split(':');
-    const hour = parseInt(hours);
-    const ampm = hour >= 12 ? 'PM' : 'AM';
-    const displayHour = hour % 12 || 12;
-    return `${displayHour}:${minutes} ${ampm}`;
-  };
+  const service = findService(draft.serviceId);
+  const daySlots = draft.date ? availability.slots[draft.date] : undefined;
+  const startOptions = useMemo(() => freeStartHours(daySlots), [daySlots]);
+  const hourOptions = useMemo(() => (draft.start === null ? [] : freeEndHours(draft.start, daySlots).map((end) => end - (draft.start as number))), [draft.start, daySlots]);
+  const hours = draft.hours && hourOptions.includes(draft.hours) ? draft.hours : null;
+  const endHour = draft.start !== null && hours ? draft.start + hours : null;
+  const total = service && hours ? service.rate * hours : 0;
+  const downpayment = total * DOWNPAYMENT_RATE;
+  const ready = Boolean(service && draft.date && draft.start !== null && hours);
 
-  const calculateDuration = (start: string, end: string) => {
-    const [startHour, startMin] = start.split(':').map(Number);
-    const [endHour, endMin] = end.split(':').map(Number);
-    const startMinutes = startHour * 60 + startMin;
-    const endMinutes = endHour * 60 + endMin;
-    return (endMinutes - startMinutes) / 60;
-  };
-
-  const formatDateDisplay = (dateString: string) => {
-    const [year, month, day] = dateString.split('-');
-    const date = new Date(parseInt(year), parseInt(month) - 1, parseInt(day));
-    const options: Intl.DateTimeFormatOptions = { weekday: 'long', year: 'numeric', month: 'long', day: 'numeric' };
-    return date.toLocaleDateString('en-US', options);
-  };
-
-  const getCurrentService = () => services.find(s => s.value === selectedService);
-  const duration = startTime && endTime ? calculateDuration(startTime, endTime) : 0;
-  const hourlyRate = getCurrentService()?.rate || 0;
-  const totalPrice = hourlyRate * duration;
-
-  const showPricing = selectedService && selectedDate && startTime && endTime;
-  const downpaymentAmount = totalPrice / 2;
-
-  const handlePaymentReceiptChange = (e: React.ChangeEvent<HTMLInputElement>) => {
-    const file = e.target.files?.[0];
-    if (!file) return;
-
-    if (file.size > 3 * 1024 * 1024) {
-      setPaymentReceiptError('Payment receipt must be 3 MB or smaller.');
-      setPaymentReceiptDataUrl('');
-      setPaymentReceiptPreview('');
-      setPaymentReceiptName('');
-      return;
-    }
-
-    setPaymentReceiptError('');
-    const reader = new FileReader();
-    reader.onloadend = () => {
-      const imageUrl = reader.result as string;
-      setPaymentReceiptDataUrl(imageUrl);
-      setPaymentReceiptPreview(imageUrl);
-      setPaymentReceiptName(file.name);
-    };
-    reader.readAsDataURL(file);
-  };
-
-  const handleSubmit = async (e: React.FormEvent) => {
-    e.preventDefault();
-    
-    if (!formRef.current) return;
-
-    if (user && user.id !== 'guest') {
-      try {
-        const { data: { session } } = await supabase.auth.getSession();
-        if (session) {
-          const response = await fetch(`https://${projectId}.supabase.co/functions/v1/make-server-032fda65/bookings`, {
-            headers: {
-              'Authorization': `Bearer ${session.access_token}`
-            }
-          });
-          
-          if (response.ok) {
-            const { bookings } = await response.json();
-            if (bookings && bookings.length >= 3) {
-              showNotification(
-                'warning',
-                'Booking Limit Reached',
-                'You have reached the maximum limit of 3 bookings. Please contact us for additional bookings.'
-              );
-              return;
-            }
-          }
-        }
-      } catch (error) {
-        console.error('Error checking booking limit:', error);
-      }
-    }
-    
-    const formData = new FormData(formRef.current);
-    const email = user?.email || '';
-    const fullName = user?.fullName || '';
-    const [firstName = '', ...restName] = fullName.split(' ');
-    const lastName = restName.join(' ');
-    const phone = user?.phone || '';
-
-    if (!fullName || !email) {
-      showNotification(
-        'error',
-        'Account Information Missing',
-        'Please sign in with a complete customer account before making a booking.'
-      );
-      return;
-    }
-
-    if (!phone.trim()) {
-      showNotification(
-        'warning',
-        'Mobile Number Required',
-        'Please add your mobile number in Profile -> Account before submitting a booking request.'
-      );
-      return;
-    }
-
-    
-    if (!paymentReference.trim()) {
-      showNotification(
-        'error',
-        'Reference Number Required',
-        'Please enter your GCash reference number before submitting your booking.'
-      );
-      return;
-    }
-
-    if (!paymentReceiptDataUrl) {
-      showNotification(
-        'error',
-        'Payment Receipt Required',
-        'Please upload your GCash payment receipt before submitting your booking.'
-      );
-      return;
-    }
-
-    formData.set('duration', `${duration} ${duration === 1 ? 'hour' : 'hours'}`);
-    formData.set('totalPrice', `₱${totalPrice.toLocaleString()}`);
-    formData.set('hourlyRate', `₱${hourlyRate.toLocaleString()}`);
-    formData.set('date', formatDateDisplay(selectedDate!));
-    formData.set('startTime', formatTime(startTime));
-    formData.set('endTime', formatTime(endTime));
-    formData.set('name', fullName);
-
-    setFormDataToSubmit({
-      formData,
-      firstName,
-      lastName,
-      email,
-      phone,
-      location: formData.get('location') as string,
-      message: formData.get('message') as string,
-      service: getCurrentService()?.label.split(' - ')[0],
-      date: formatDateDisplay(selectedDate!),
-      time: `${formatTime(startTime)} - ${formatTime(endTime)}`,
-      duration: `${duration} ${duration === 1 ? 'hour' : 'hours'}`,
-      price: `₱${totalPrice.toLocaleString()}`,
-      paymentReference,
-      paymentReceiptName,
-      paymentReceiptPreview
+  const update = (patch: Partial<Draft>) => {
+    setDraft((current) => ({ ...current, ...patch }));
+    setErrors((current) => {
+      const next = { ...current };
+      Object.keys(patch).forEach((key) => delete next[key]);
+      return next;
     });
-    setShowConfirmDialog(true);
   };
 
-  const handleConfirmSubmit = async () => {
-    setShowConfirmDialog(false);
+  useEffect(() => {
+    try {
+      sessionStorage.setItem(DRAFT_KEY, JSON.stringify(draft));
+    } catch {
+      /* storage blocked: draft only lives in memory */
+    }
+  }, [draft]);
 
-    if (!formDataToSubmit) return;
+  // Service / package buttons elsewhere on the page prefill the form.
+  useEffect(() => {
+    if (!prefill) return;
+    setDraft((current) => ({
+      ...current,
+      serviceId: prefill.serviceId || current.serviceId,
+      hours: prefill.hours || current.hours,
+    }));
+  }, [prefill]);
+
+  // If the chosen start time stops being free (fresh availability), clear it.
+  useEffect(() => {
+    if (draft.start !== null && draft.date && !startOptions.includes(draft.start)) {
+      setDraft((current) => ({ ...current, start: null }));
+    }
+  }, [startOptions, draft.start, draft.date]);
+
+  const handleReceipt = async (file?: File | null) => {
+    if (!file) return;
+    if (!file.type.startsWith('image/')) {
+      setErrors((current) => ({ ...current, receipt: 'Please upload a screenshot or photo (JPG or PNG).' }));
+      return;
+    }
+    if (file.size > 15 * 1024 * 1024) {
+      setErrors((current) => ({ ...current, receipt: 'That file is over 15 MB. Please upload a smaller screenshot.' }));
+      return;
+    }
+    setReceiptBusy(true);
+    try {
+      const compressed = await compressImage(file, 1600, 0.8);
+      setReceipt({ blob: compressed.blob, dataUrl: compressed.dataUrl, name: file.name });
+      setErrors((current) => ({ ...current, receipt: '' }));
+    } catch (error) {
+      setErrors((current) => ({ ...current, receipt: errorMessage(error, 'We could not read that image.') }));
+    } finally {
+      setReceiptBusy(false);
+      if (fileRef.current) fileRef.current.value = '';
+    }
+  };
+
+  const validate = () => {
+    const next: Record<string, string> = {};
+    if (!service) next.serviceId = 'Choose a service.';
+    if (!draft.date) next.date = 'Pick a date.';
+    if (draft.start === null) next.start = 'Pick a start time.';
+    else if (!hours) next.hours = 'Choose how many hours you need.';
+    if (draft.location.trim().length < 8) next.location = 'Enter the full address of the shoot location.';
+    if (needsPhone && !phoneLooksValid(draft.phone)) next.phone = 'Enter a mobile number we can reach you on (e.g. 0917 123 4567).';
+    if (!isGuest) {
+      if (reference.trim().length < 6) next.reference = 'Enter the GCash reference number from your receipt.';
+      if (!receipt) next.receipt = 'Upload your GCash receipt screenshot.';
+    }
+    setErrors(next);
+    const firstKey = Object.keys(next)[0];
+    if (firstKey) {
+      const field = sectionRef.current?.querySelector<HTMLElement>(`[data-field="${firstKey}"]`);
+      field?.scrollIntoView({ behavior: 'smooth', block: 'center' });
+      field?.querySelector<HTMLElement>('input, textarea, button')?.focus({ preventScroll: true });
+    }
+    return !firstKey;
+  };
+
+  const handleSubmit = async (event: FormEvent) => {
+    event.preventDefault();
+    if (isTeam) {
+      toast.info('Bookings are for customer accounts', { description: 'Studio team accounts can manage bookings from the Admin dashboard.' });
+      return;
+    }
+    if (!validate()) return;
+    if (isGuest) {
+      setAuthPromptOpen(true);
+      return;
+    }
+
+    try {
+      const { data, error } = await supabase.from('bookings').select('id, status').eq('user_id', user.id).in('status', ACTIVE_STATUSES);
+      if (!error && (data || []).length >= MAX_ACTIVE_BOOKINGS) {
+        toast.warning('You already have the maximum active bookings', {
+          description: `You can have up to ${MAX_ACTIVE_BOOKINGS} pending or confirmed bookings at a time. Message us if you need more.`,
+        });
+        return;
+      }
+    } catch {
+      /* the database enforces nothing here; allow submit if the check fails */
+    }
+    setConfirmOpen(true);
+  };
+
+  const submitBooking = async () => {
+    if (submittingRef.current || !service || !draft.date || draft.start === null || !hours || !receipt) return;
+    submittingRef.current = true;
+    setSubmitting(true);
 
     try {
       const { data: { session } } = await supabase.auth.getSession();
-      
-      if (!session) {
-        showNotification('error', 'Authentication Error', 'Please sign in to make a booking.');
-        return;
+      if (!session) throw new Error('Your session expired. Please sign in again.');
+
+      const startTime = hourToTime(draft.start);
+      const endTime = hourToTime(draft.start + hours);
+
+      // Fresh conflict check, in case someone booked the slot a moment ago.
+      const { data: slots, error: slotError } = await supabase.rpc('get_booked_slots', { start_date: draft.date, end_date: draft.date });
+      if (!slotError && slots) {
+        const taken = (slots as any[]).map((slot) => ({ date: draft.date as string, start: timeToHour(slot.start_time), end: timeToHour(slot.end_time) }));
+        if (!isRangeFree(draft.start, draft.start + hours, taken)) {
+          availability.reload();
+          throw new Error('Sorry, that time was just booked. Please choose another time.');
+        }
+      } else if (slotError && !isMissingRelation(slotError)) {
+        console.warn('Slot check failed:', slotError.message);
       }
 
-      const bookingMessage = buildBookingMessage(formDataToSubmit.message || '', {
+      let phone = accountPhone;
+      if (needsPhone) {
+        phone = draft.phone.trim();
+        const { error } = await supabase.from('users').update({ phone, updated_at: new Date().toISOString() }).eq('id', user.id);
+        if (error) console.warn('Could not save phone to profile:', error.message);
+        else onUserUpdated({ ...user, phone });
+      }
+
+      const receiptPath = await uploadToBucket(RECEIPTS_BUCKET, `${user.id}/${randomId()}.jpg`, receipt.blob);
+      const message = buildBookingMessage(draft.notes, {
         paymentMethod: 'GCash',
-        paymentReference: formDataToSubmit.paymentReference,
-        paymentReceiptUrl: paymentReceiptDataUrl,
-        paymentReceiptName: formDataToSubmit.paymentReceiptName,
+        paymentReference: reference.trim(),
+        paymentReceiptPath: receiptPath || undefined,
+        paymentReceiptUrl: receiptPath ? undefined : receipt.dataUrl,
+        paymentReceiptName: receipt.name,
         paymentStatus: 'submitted',
         paymentSubmittedAt: new Date().toISOString(),
-        downpaymentAmount,
-        remainingBalance: downpaymentAmount,
+        downpaymentAmount: downpayment,
       });
 
-      const bookingPayload = {
-        full_name: user?.fullName || `${formDataToSubmit.firstName} ${formDataToSubmit.lastName}`.trim(),
-        email: user?.email || formDataToSubmit.email,
-        phone: user?.phone || formDataToSubmit.phone,
-        service: formDataToSubmit.service,
-        booking_date: selectedDate,
+      const row = {
+        user_id: session.user.id,
+        full_name: user.fullName,
+        email: user.email,
+        phone,
+        service: service.title,
+        booking_date: draft.date,
         start_time: startTime,
         end_time: endTime,
-        duration: duration,
-        price: hourlyRate,
-        transportation: 0,
+        duration: hours,
+        price: service.rate,
         transportation_fee: 0,
-        total_price: totalPrice,
-        location: formDataToSubmit.location,
-        message: bookingMessage
+        total_price: total,
+        location: draft.location.trim(),
+        message,
+        status: 'pending',
       };
 
-      const bookingInsertPayload = {
-        user_id: session.user.id,
-        full_name: bookingPayload.full_name,
-        email: bookingPayload.email,
-        phone: bookingPayload.phone,
-        service: bookingPayload.service,
-        booking_date: bookingPayload.booking_date,
-        start_time: bookingPayload.start_time,
-        end_time: bookingPayload.end_time,
-        duration: bookingPayload.duration,
-        price: bookingPayload.price,
-        transportation_fee: bookingPayload.transportation_fee ?? 0,
-        total_price: bookingPayload.total_price,
-        location: bookingPayload.location,
-        message: bookingPayload.message,
-        status: 'pending'
+      const { data: booking, error } = await supabase.from('bookings').insert(row).select('*').single();
+      if (error || !booking) throw new Error(error?.message || 'We could not save your booking.');
+
+      void notify('/send-booking-email', { booking: { ...row, id: booking.id, message: escapeHtml(draft.notes.trim()) } });
+
+      const success: BookingSuccess = {
+        reference: bookingReference(booking),
+        service: service.title,
+        date: draft.date,
+        dateDisplay: formatDateLong(draft.date),
+        startTime,
+        endTime,
+        time: `${formatTime(startTime)} – ${formatTime(endTime)}`,
+        hours,
+        total,
+        downpayment,
+        balance: total - downpayment,
+        location: row.location,
+        email: user.email,
       };
 
-      const { data: booking, error: bookingError } = await supabase
-        .from('bookings')
-        .insert(bookingInsertPayload)
-        .select('*')
-        .single();
-
-      if (bookingError || !booking) {
-        console.error('Direct booking insert failed:', bookingError);
-        throw new Error(bookingError?.message || 'Failed to create booking');
-      }
-
+      setConfirmOpen(false);
+      setDraft(EMPTY_DRAFT);
+      setReference('');
+      setReceipt(null);
       try {
-        await fetch(`https://${projectId}.supabase.co/functions/v1/make-server-032fda65/send-booking-email`, {
-          method: 'POST',
-          headers: {
-            'Content-Type': 'application/json',
-            'Authorization': `Bearer ${session.access_token}`
-          },
-          body: JSON.stringify({ booking: bookingPayload })
-        });
-      } catch (emailError) {
-        console.error('Email notification error:', emailError);
+        sessionStorage.removeItem(DRAFT_KEY);
+      } catch {
+        /* ignore */
       }
-
-      if (formRef.current) {
-        formRef.current.reset();
-      }
-      setSelectedDate(null);
-      setStartTime('');
-      setEndTime('');
-      setSelectedService('');
-      setFormDataToSubmit(null);
-      setPaymentReference('');
-      setPaymentReceiptDataUrl('');
-      setPaymentReceiptPreview('');
-      setPaymentReceiptName('');
-      setPaymentReceiptError('');
-
-      const bookingDateValue = booking.booking_date || selectedDate;
-      const bookingStartTime = booking.start_time || startTime;
-      const bookingEndTime = booking.end_time || endTime;
-      const bookingTotalPrice = booking.total_price || totalPrice;
-      const bookingDuration = Number(booking.duration || duration);
-
-      const successPayload = {
-        fullName: booking.full_name || user?.fullName || `${formDataToSubmit.firstName} ${formDataToSubmit.lastName}`.trim(),
-        email: booking.email || user?.email || formDataToSubmit.email,
-        phone: booking.phone || user?.phone || formDataToSubmit.phone,
-        service: booking.service || formDataToSubmit.service,
-        date: bookingDateValue ? formatDateDisplay(bookingDateValue) : formDataToSubmit.date,
-        time: `${formatTime(bookingStartTime)} - ${formatTime(bookingEndTime)}`,
-        startTime: bookingStartTime,
-        endTime: bookingEndTime,
-        duration: `${bookingDuration} ${bookingDuration === 1 ? 'hour' : 'hours'}`,
-        price: `₱${Number(bookingTotalPrice).toLocaleString()}`,
-        transportation: booking.transportation_fee || booking.transportation || 0,
-        totalPrice: bookingTotalPrice,
-        location: booking.location || formDataToSubmit.location,
-        message: booking.message || formDataToSubmit.message || ''
-      };
-
-      if (onSuccess) {
-        onSuccess(successPayload);
-      } else {
-        showNotification(
-          'success',
-          'Booking Submitted',
-          'Your booking was submitted successfully and is now waiting for admin approval.'
-        );
-      }
-
+      availability.reload();
+      onSuccess(success);
     } catch (error) {
-      console.error('Booking submission error:', error);
-      showNotification(
-        'error',
-        'Booking Failed',
-        error instanceof Error ? error.message : 'Failed to create booking. Please try again.'
-      );
+      toast.error('Booking not submitted', { description: errorMessage(error) });
+    } finally {
+      submittingRef.current = false;
+      setSubmitting(false);
     }
   };
 
-  const getEndTimeOptions = () => {
-    if (!startTime) return [];
-    const startIndex = availableTimeSlots.indexOf(startTime);
-    return availableTimeSlots.slice(startIndex + 1, startIndex + 9);
-  };
-
-  const isLoggedIn = !!user;
-  const isGuest = !user || user.id === 'guest' || user.role === 'guest';
-  const canBook = isLoggedIn && user.role === 'customer';
-  const isAdminRole = user && ['superadmin', 'admin', 'staff'].includes(user.role);
-
-  const showNotification = (type: 'success' | 'error' | 'info' | 'warning' | 'login', title: string, message: string, showButton?: boolean, buttonText?: string, onButtonClick?: () => void) => {
-    setNotification({
-      show: true,
-      type,
-      title,
-      message,
-      showButton,
-      buttonText,
-      onButtonClick
-    });
-  };
-
-  const handleFormClick = (e: React.MouseEvent) => {
-    if (!canBook) {
-      e.preventDefault();
-      
-      if (isAdminRole) {
-        showNotification(
-          'warning',
-          'Booking Not Available',
-          'Booking is only available for customer accounts. Admin and staff members cannot make bookings.'
-        );
-      } else if (isGuest) {
-        setShowGuestPrompt(true);
-      }
-    }
-  };
+  const summary = (
+    <div className="summary-card">
+      <h3>Booking summary</h3>
+      <dl>
+        <div>
+          <dt>Service</dt>
+          <dd>{service?.title || '—'}</dd>
+        </div>
+        <div>
+          <dt>Date</dt>
+          <dd>{draft.date ? formatDateLong(draft.date) : '—'}</dd>
+        </div>
+        <div>
+          <dt>Time</dt>
+          <dd>{draft.start !== null && endHour ? `${formatTime(hourToTime(draft.start))} – ${formatTime(hourToTime(endHour))}` : '—'}</dd>
+        </div>
+        <div>
+          <dt>Rate</dt>
+          <dd>{service ? `${formatPeso(service.rate)} × ${hours ? hoursLabel(hours) : '—'}` : '—'}</dd>
+        </div>
+      </dl>
+      <div className="summary-total">
+        <span>Session total</span>
+        <strong>{formatPeso(total)}</strong>
+      </div>
+      <div className="summary-split">
+        <div>
+          <span>Pay now ({Math.round(DOWNPAYMENT_RATE * 100)}%)</span>
+          <strong>{formatPesoExact(downpayment)}</strong>
+        </div>
+        <div>
+          <span>On shoot day</span>
+          <strong>{formatPesoExact(total - downpayment)}</strong>
+        </div>
+      </div>
+      <p className="summary-note">
+        <Info size={14} aria-hidden="true" /> Transportation fee (if any) is added after review, before your shoot.
+      </p>
+    </div>
+  );
 
   return (
-    <>
-      <section id="contact" className="contact">
-        <div className="container">
-          <div className="contact-wrapper">
-            <div className="contact-info">
-              <div className="section-tag">Get In Touch</div>
-              <h2 className="section-title">Let's Create Together</h2>
-              <p className="contact-lead">
-                Ready to bring your vision to life? We'd love to hear about your project and discuss how we can help create something extraordinary.
-              </p>
+    <section id="contact" className="section booking-section" ref={sectionRef}>
+      <div className="container">
+        <header className="section-head">
+          <p className="eyebrow">Book a session</p>
+          <h2 className="section-title">Reserve your date</h2>
+          <p className="section-lead">See open dates, get your price instantly and lock in your slot with a GCash downpayment. It takes about three minutes.</p>
+        </header>
 
-              <div className="contact-details">
-                <div className="contact-detail-item">
-                  <div className="contact-detail-icon">
-                    <svg width="24" height="24" viewBox="0 0 24 24" fill="none">
-                      <path
-                        d="M3 8L10.89 13.26C11.2187 13.4793 11.6049 13.5963 12 13.5963C12.3951 13.5963 12.7813 13.4793 13.11 13.26L21 8M5 19H19C19.5304 19 20.0391 18.7893 20.4142 18.4142C20.7893 18.0391 21 17.5304 21 17V7C21 6.46957 20.7893 5.96086 20.4142 5.58579C20.0391 5.21071 19.5304 5 19 5H5C4.46957 5 3.96086 5.21071 3.58579 5.58579C3.21071 5.96086 3 6.46957 3 7V17C3 17.5304 3.21071 18.0391 3.58579 18.4142C3.96086 18.7893 4.46957 19 5 19Z"
-                        stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" />
-                    </svg>
-                  </div>
-                  <div className="contact-detail-content">
-                    <div className="contact-detail-label">Email</div>
-                    <a href="mailto:tutokpitikstudios@gmail.com">tutokpitikstudios@gmail.com</a>
-                  </div>
+        <div className="booking-layout">
+          <form className="booking-form" onSubmit={handleSubmit} noValidate>
+            {isTeam && (
+              <div className="notice notice-info">
+                <Info size={18} aria-hidden="true" />
+                <p>You are signed in as studio {user.role}. Bookings can only be made from customer accounts. Use the Admin dashboard to manage bookings.</p>
+              </div>
+            )}
+
+            <fieldset className="booking-step" disabled={isTeam} data-field="serviceId">
+              <legend>
+                <span className="step-num">1</span> Choose a service
+              </legend>
+              <div className="service-options" role="radiogroup" aria-label="Service">
+                {SERVICES.map((entry) => {
+                  const Icon = SERVICE_ICONS[entry.icon];
+                  const selected = draft.serviceId === entry.id;
+                  return (
+                    <label key={entry.id} className={`option-card ${selected ? 'is-selected' : ''}`}>
+                      <input type="radio" name="service" value={entry.id} checked={selected} onChange={() => update({ serviceId: entry.id })} />
+                      <Icon size={20} aria-hidden="true" />
+                      <span className="option-title">{entry.title}</span>
+                      <span className="option-sub">{formatPeso(entry.rate)}/hr</span>
+                    </label>
+                  );
+                })}
+              </div>
+              {errors.serviceId && <p className="field-error">{errors.serviceId}</p>}
+            </fieldset>
+
+            <fieldset className="booking-step" disabled={isTeam}>
+              <legend>
+                <span className="step-num">2</span> Pick a date and time
+              </legend>
+              <div className="datetime-grid">
+                <div data-field="date">
+                  <BookingCalendar value={draft.date} onChange={(date) => update({ date, start: null })} availability={availability} />
+                  {availability.status === 'error' && (
+                    <p className="field-hint">We could not load live availability right now. You can still request a date and we will confirm it.</p>
+                  )}
+                  {errors.date && <p className="field-error">{errors.date}</p>}
                 </div>
 
-                <div className="contact-detail-item">
-                  <div className="contact-detail-icon">
-                    <svg width="24" height="24" viewBox="0 0 24 24" fill="none">
-                      <path
-                        d="M22 16.92V19.92C22.0011 20.1985 21.9441 20.4742 21.8325 20.7293C21.7209 20.9845 21.5573 21.2136 21.3521 21.4019C21.1468 21.5901 20.9046 21.7335 20.6407 21.8227C20.3769 21.9119 20.0974 21.9451 19.82 21.92C16.7428 21.5856 13.787 20.5341 11.19 18.85C8.77382 17.3147 6.72533 15.2662 5.18999 12.85C3.49997 10.2412 2.44824 7.27099 2.11999 4.18C2.095 3.90347 2.12787 3.62476 2.21649 3.36162C2.30512 3.09849 2.44756 2.85669 2.63476 2.65162C2.82196 2.44655 3.0498 2.28271 3.30379 2.17052C3.55777 2.05833 3.83233 2.00026 4.10999 2H7.10999C7.5953 1.99522 8.06579 2.16708 8.43376 2.48353C8.80173 2.79999 9.04207 3.23945 9.10999 3.72C9.23662 4.68007 9.47144 5.62273 9.80999 6.53C9.94454 6.88792 9.97366 7.27691 9.8939 7.65088C9.81415 8.02485 9.62886 8.36811 9.35999 8.64L8.08999 9.91C9.51355 12.4135 11.5864 14.4864 14.09 15.91L15.36 14.64C15.6319 14.3711 15.9751 14.1858 16.3491 14.1061C16.7231 14.0263 17.1121 14.0555 17.47 14.19C18.3773 14.5286 19.3199 14.7634 20.28 14.89C20.7658 14.9585 21.2094 15.2032 21.5265 15.5775C21.8437 15.9518 22.0122 16.4296 22 16.92Z"
-                        stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" />
-                    </svg>
-                  </div>
-                  <div className="contact-detail-content">
-                    <div className="contact-detail-label">Phone</div>
-                    <a href="tel:+639624323187">+63 962 4323 187</a>
-                  </div>
-                </div>
+                <div className="datetime-side">
+                  {!draft.date && <p className="field-hint datetime-empty">Pick an open date to see available start times.</p>}
+                  {draft.date && (
+                    <div className="time-picker" data-field="start">
+                      <p className="field-label">Start time · {formatDateLong(draft.date)}</p>
+                      <div className="time-chips">
+                        {startOptions.length === 0 && <p className="field-hint">No start times left on this date. Please pick another day.</p>}
+                        {startOptions.map((hour) => (
+                          <button
+                            key={hour}
+                            type="button"
+                            className={`chip chip-time ${draft.start === hour ? 'is-active' : ''}`}
+                            aria-pressed={draft.start === hour}
+                            onClick={() => update({ start: hour })}
+                          >
+                            {formatTime(hourToTime(hour))}
+                          </button>
+                        ))}
+                      </div>
+                      {errors.start && <p className="field-error">{errors.start}</p>}
+                    </div>
+                  )}
 
-                <div className="contact-detail-item">
-                  <div className="contact-detail-icon">
-                    <svg width="24" height="24" viewBox="0 0 24 24" fill="none">
-                      <path
-                        d="M21 10C21 17 12 23 12 23C12 23 3 17 3 10C3 7.61305 3.94821 5.32387 5.63604 3.63604C7.32387 1.94821 9.61305 1 12 1C14.3869 1 16.6761 1.94821 18.364 3.63604C20.0518 5.32387 21 7.61305 21 10Z"
-                        stroke="currentColor" strokeWidth="2" />
-                      <circle cx="12" cy="10" r="3" stroke="currentColor" strokeWidth="2" />
-                    </svg>
-                  </div>
-                  <div className="contact-detail-content">
-                    <div className="contact-detail-label">Location</div>
-                    <span>Quezon City, Philippines</span>
-                  </div>
+                  {draft.start !== null && (
+                    <div className="time-picker" data-field="hours">
+                      <p className="field-label">How long?</p>
+                      <div className="time-chips">
+                        {hourOptions.map((value) => {
+                          const pack = service?.packages.find((entry) => entry.hours === value);
+                          return (
+                            <button
+                              key={value}
+                              type="button"
+                              className={`chip chip-time ${hours === value ? 'is-active' : ''}`}
+                              aria-pressed={hours === value}
+                              onClick={() => update({ hours: value })}
+                            >
+                              {hoursLabel(value)}
+                              {pack && <span className="chip-tag">{pack.name}</span>}
+                            </button>
+                          );
+                        })}
+                      </div>
+                      {draft.hours && !hours && hourOptions.length > 0 && (
+                        <p className="field-hint">{hoursLabel(draft.hours)} does not fit from this start time. Pick a shorter session or an earlier time.</p>
+                      )}
+                      {endHour && <p className="field-hint">Ends at {formatTime(hourToTime(endHour))}.</p>}
+                      {errors.hours && <p className="field-error">{errors.hours}</p>}
+                    </div>
+                  )}
                 </div>
               </div>
+            </fieldset>
 
-              <div className="social-links">
-                <a href="https://www.instagram.com/tutokpitikstudios_/" className="social-link">Instagram</a>
-                <a href="https://www.facebook.com/profile.php?id=61554013355967" className="social-link">Facebook</a>
-                <a href="https://www.behance.net/princebalane" className="social-link">Behance</a>
-              </div>
-            </div>
-
-            <div className={`contact-form-card ${!canBook ? 'contact-form-card-locked' : ''}`}>
-              {!canBook && (
-                <button
-                  type="button"
-                  className="booking-form-lock-overlay"
-                  onClick={handleFormClick}
-                  aria-label={isGuest ? 'Create an account or sign in to book' : 'Booking not available for this account'}
-                />
+            <fieldset className="booking-step" disabled={isTeam}>
+              <legend>
+                <span className="step-num">3</span> Your details
+              </legend>
+              {isCustomer && (
+                <div className="account-box">
+                  <span className="account-label">Booking as</span>
+                  <strong>{user.fullName}</strong>
+                  <span>{user.email}</span>
+                  {accountPhone && <span>{accountPhone}</span>}
+                </div>
               )}
-              <form className="contact-form" ref={formRef} onSubmit={handleSubmit} name="booking" method="POST" data-netlify="true" netlify-honeypot="bot-field">
-                <input type="hidden" name="form-name" value="booking" />
-                <input type="hidden" name="bot-field" />
-                <input type="hidden" name="duration" id="hiddenDuration" />
-                <input type="hidden" name="totalPrice" id="hiddenTotalPrice" />
-                <input type="hidden" name="hourlyRate" id="hiddenHourlyRate" />
-
-                {canBook && (
-                  <div className="account-booking-summary">
-                    <div className="booking-account-row">
-                      <span>Booked By</span>
-                      <strong>{user?.fullName}</strong>
-                    </div>
-                    <div className="booking-account-row">
-                      <span>Email</span>
-                      <strong>{user?.email}</strong>
-                    </div>
-                    <div className="booking-account-row">
-                      <span>Mobile Number</span>
-                      <strong>{user?.phone || 'Add this in Profile -> Account before booking'}</strong>
-                    </div>
-                  </div>
-                )}
-
-                <div className="form-field">
-                  <label>Event Location / Full Address *</label>
-                  <div className="address-input-wrapper">
-                    <input
-                      type="text"
-                      id="addressInput"
-                      name="location"
-                      placeholder="Enter complete address (e.g., 123 Main St, Quezon City, Metro Manila)"
-                      required
-                      disabled={!canBook}
-                    />
-                    <div className="address-icon">
-                      <svg width="20" height="20" viewBox="0 0 20 20" fill="none">
-                        <path d="M10 17.5C10 17.5 16.25 12.5 16.25 7.5C16.25 5.84315 15.5915 4.25425 14.4194 3.08056C13.2473 1.90687 11.6576 1.25 10 1.25C8.34241 1.25 6.75269 1.90687 5.58058 3.08056C4.40848 4.25425 3.75 5.84315 3.75 7.5C3.75 12.5 10 17.5 10 17.5Z" stroke="currentColor" strokeWidth="1.5"/>
-                        <circle cx="10" cy="7.5" r="2.5" stroke="currentColor" strokeWidth="1.5"/>
-                      </svg>
-                    </div>
-                  </div>
-                  <span className="form-help">Please provide the complete address where the photoshoot will take place</span>
+              {isGuest && (
+                <div className="notice">
+                  <Lock size={18} aria-hidden="true" />
+                  <p>
+                    You will sign in or create a free account before paying. Your choices are saved on this device.{' '}
+                    <button type="button" className="btn-link" onClick={() => onRequireAuth('signin')}>
+                      Sign in now
+                    </button>
+                  </p>
                 </div>
-
-                <div className="form-field">
-                  <label>Service *</label>
-                  <select 
-                    name="service" 
-                    required 
-                    value={selectedService}
-                    onChange={(e) => setSelectedService(e.target.value)}
-                    disabled={!canBook}
-                  >
-                    <option value="">Select a service</option>
-                    {services.map(service => (
-                      <option key={service.value} value={service.value} data-rate={service.rate}>
-                        {service.label}
-                      </option>
-                    ))}
-                  </select>
+              )}
+              {needsPhone && (
+                <div className="field" data-field="phone">
+                  <label htmlFor="booking-phone">Mobile number</label>
+                  <input
+                    id="booking-phone"
+                    type="tel"
+                    inputMode="tel"
+                    autoComplete="tel"
+                    placeholder="0917 123 4567"
+                    value={draft.phone}
+                    onChange={(event) => update({ phone: event.target.value })}
+                    aria-invalid={Boolean(errors.phone)}
+                  />
+                  <p className="field-hint">We will also save this to your profile for booking updates.</p>
+                  {errors.phone && <p className="field-error">{errors.phone}</p>}
                 </div>
-
-                <BookingCalendar
-                  selectedDate={selectedDate}
-                  onDateSelect={setSelectedDate}
-                  showCalendar={showCalendar}
-                  onToggleCalendar={setShowCalendar}
-                  disabled={!canBook}
+              )}
+              <div className="field" data-field="location">
+                <label htmlFor="booking-location">Shoot location (full address)</label>
+                <div className="input-icon">
+                  <MapPin size={18} aria-hidden="true" />
+                  <input
+                    id="booking-location"
+                    type="text"
+                    autoComplete="street-address"
+                    placeholder="e.g. 123 Tomas Morato Ave, Quezon City"
+                    value={draft.location}
+                    onChange={(event) => update({ location: event.target.value })}
+                    aria-invalid={Boolean(errors.location)}
+                  />
+                </div>
+                {errors.location && <p className="field-error">{errors.location}</p>}
+              </div>
+              <div className="field">
+                <label htmlFor="booking-notes">
+                  Notes <span className="optional">(optional)</span>
+                </label>
+                <textarea
+                  id="booking-notes"
+                  rows={3}
+                  placeholder="Occasion, number of people, looks or shots you want…"
+                  value={draft.notes}
+                  onChange={(event) => update({ notes: event.target.value })}
                 />
+              </div>
+            </fieldset>
 
-                <div className="form-grid">
-                  <div className="form-field">
-                    <label>Start Time *</label>
-                    <div className="time-select-wrapper">
-                      <select
-                        name="startTime"
-                        required
-                        disabled={!selectedDate || !canBook}
-                        value={startTime}
-                        onChange={(e) => {
-                          setStartTime(e.target.value);
-                          setEndTime('');
+            <fieldset className="booking-step" disabled={isTeam || !ready}>
+              <legend>
+                <span className="step-num">4</span> Secure your slot
+              </legend>
+              {!ready ? (
+                <p className="field-hint">Choose a service, date and time first. Your downpayment amount will appear here.</p>
+              ) : isGuest ? (
+                <div className="auth-cta">
+                  <ShieldCheck size={28} aria-hidden="true" />
+                  <div>
+                    <h4>Create a free account to reserve this date</h4>
+                    <p>Your booking, payment receipt and photo delivery link stay together in your account.</p>
+                  </div>
+                  <div className="auth-cta-actions">
+                    <button type="button" className="btn btn-primary" onClick={() => onRequireAuth('signup')}>
+                      Create account
+                    </button>
+                    <button type="button" className="btn btn-ghost" onClick={() => onRequireAuth('signin')}>
+                      I have an account
+                    </button>
+                  </div>
+                </div>
+              ) : (
+                <div className="gcash-grid">
+                  <div className="gcash-qr">
+                    <img src="/gcash-qr.jpg" alt={`${STUDIO.name} GCash QR code`} width={220} height={220} loading="lazy" />
+                    <p>
+                      Send <strong>{formatPesoExact(downpayment)}</strong>
+                      <span>{Math.round(DOWNPAYMENT_RATE * 100)}% downpayment via GCash</span>
+                    </p>
+                  </div>
+                  <div className="gcash-proof">
+                    <div className="field" data-field="reference">
+                      <label htmlFor="booking-reference">GCash reference number</label>
+                      <input
+                        id="booking-reference"
+                        type="text"
+                        inputMode="numeric"
+                        autoComplete="off"
+                        placeholder="13-digit reference no."
+                        value={reference}
+                        onChange={(event) => {
+                          setReference(event.target.value);
+                          setErrors((current) => ({ ...current, reference: '' }));
                         }}
-                      >
-                        <option value="">{selectedDate ? 'Select start time' : 'Select date first'}</option>
-                        {selectedDate && availableTimeSlots.map(time => (
-                          <option key={time} value={time}>{formatTime(time)}</option>
-                        ))}
-                      </select>
-                      <div className="time-icon">
-                        <svg width="18" height="18" viewBox="0 0 18 18" fill="none">
-                          <circle cx="9" cy="9" r="7" stroke="currentColor" strokeWidth="1.5" />
-                          <path d="M9 5V9L11.5 11.5" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" />
-                        </svg>
-                      </div>
+                        aria-invalid={Boolean(errors.reference)}
+                      />
+                      {errors.reference && <p className="field-error">{errors.reference}</p>}
                     </div>
-                  </div>
-                  <div className="form-field">
-                    <label>End Time *</label>
-                    <div className="time-select-wrapper">
-                      <select
-                        name="endTime"
-                        required
-                        disabled={!startTime || !canBook}
-                        value={endTime}
-                        onChange={(e) => setEndTime(e.target.value)}
-                      >
-                        <option value="">{startTime ? 'Select end time' : 'Select start time first'}</option>
-                        {getEndTimeOptions().map(time => (
-                          <option key={time} value={time}>{formatTime(time)}</option>
-                        ))}
-                      </select>
-                      <div className="time-icon">
-                        <svg width="18" height="18" viewBox="0 0 18 18" fill="none">
-                          <circle cx="9" cy="9" r="7" stroke="currentColor" strokeWidth="1.5" />
-                          <path d="M9 5V9L11.5 11.5" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" />
-                        </svg>
-                      </div>
-                    </div>
-                  </div>
-                </div>
-
-                {endTime && (
-                  <div className="duration-display">
-                    <div className="duration-info">
-                      <svg width="20" height="20" viewBox="0 0 20 20" fill="none">
-                        <path
-                          d="M10 18C14.4183 18 18 14.4183 18 10C18 5.58172 14.4183 2 10 2C5.58172 2 2 5.58172 2 10C2 14.4183 5.58172 18 10 18Z"
-                          stroke="currentColor" strokeWidth="2" />
-                        <path d="M10 6V10L13 13" stroke="currentColor" strokeWidth="2" strokeLinecap="round" />
-                      </svg>
-                      <span>Duration: {duration} {duration === 1 ? 'hour' : 'hours'}</span>
-                    </div>
-                  </div>
-                )}
-
-                {showPricing && (
-                  <div className="pricing-display">
-                    <div className="pricing-header">
-                      <svg width="20" height="20" viewBox="0 0 20 20" fill="none">
-                        <path
-                          d="M10 2V18M10 2C8 2 5 3 5 6C5 9 8 10 10 10M10 2C12 2 15 3 15 6C15 9 12 10 10 10M10 10C8 10 5 11 5 14C5 17 8 18 10 18M10 10C12 10 15 11 15 14C15 17 12 18 10 18"
-                          stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" />
-                      </svg>
-                      <span>Booking Summary</span>
-                    </div>
-                    <div className="pricing-details">
-                      <div className="pricing-row">
-                        <span>Service</span>
-                        <span>{getCurrentService()?.label.split(' - ')[0]}</span>
-                      </div>
-                      <div className="pricing-row">
-                        <span>Date & Time</span>
-                        <span>{formatDateDisplay(selectedDate!)}</span>
-                      </div>
-                      <div className="pricing-row">
-                        <span>Duration</span>
-                        <span>{duration} {duration === 1 ? 'hour' : 'hours'}</span>
-                      </div>
-                      <div className="pricing-row">
-                        <span>Rate per Hour</span>
-                        <span>₱{hourlyRate.toLocaleString()}</span>
-                      </div>
-                      <div className="pricing-divider"></div>
-                      <div className="pricing-calculation">
-                        <div className="calc-item">
-                          <span className="calc-value">₱{hourlyRate.toLocaleString()}</span>
-                        </div>
-                        <div className="calc-operator">
-                          <svg width="16" height="16" viewBox="0 0 16 16" fill="none">
-                            <path d="M4 4L12 12M12 4L4 12" stroke="currentColor" strokeWidth="2" strokeLinecap="round"/>
-                          </svg>
-                        </div>
-                        <div className="calc-item">
-                          <span className="calc-value">{duration}</span>
-                          <span className="calc-unit">{duration === 1 ? 'hour' : 'hours'}</span>
-                        </div>
-                        <div className="calc-equals">
-                          <svg width="16" height="16" viewBox="0 0 16 16" fill="none">
-                            <path d="M3 6H13M3 10H13" stroke="currentColor" strokeWidth="2" strokeLinecap="round"/>
-                          </svg>
-                        </div>
-                        <div className="calc-result">
-                          <span className="calc-value-result">₱{totalPrice.toLocaleString()}</span>
-                        </div>
-                      </div>
-                      <div className="pricing-row pricing-total">
-                        <span>Total Amount</span>
-                        <span>₱{totalPrice.toLocaleString()}</span>
-                      </div>
-                    </div>
-                    <div className="pricing-note">
-                      <svg width="16" height="16" viewBox="0 0 16 16" fill="none">
-                        <path
-                          d="M8 14C11.3137 14 14 11.3137 14 8C14 4.68629 11.3137 2 8 2C4.68629 2 2 4.68629 2 8C2 11.3137 4.68629 14 8 14Z"
-                          stroke="currentColor" strokeWidth="1.5" />
-                        <path d="M8 11V8M8 5H8.01" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" />
-                      </svg>
-                      <span>Payment details will be sent to your email after booking confirmation.</span>
-                    </div>
-                    <div className="pricing-note" style={{ marginTop: '8px' }}>
-                      <svg width="16" height="16" viewBox="0 0 16 16" fill="none">
-                        <path
-                          d="M8 14C11.3137 14 14 11.3137 14 8C14 4.68629 11.3137 2 8 2C4.68629 2 2 4.68629 2 8C2 11.3137 4.68629 14 8 14Z"
-                          stroke="currentColor" strokeWidth="1.5" />
-                        <path d="M8 11V8M8 5H8.01" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" />
-                      </svg>
-                      <span>Note: The price above is for the service only. Transportation fee will be calculated based on your location and will be sent via email.</span>
-                    </div>
-                  </div>
-                )}
-
-                {showPricing && (
-                  <div className="gcash-payment-card">
-                    <div className="gcash-payment-header">
-                      <div>
-                        <h4>GCash Payment</h4>
-                        <p>Scan the QR code, pay the required downpayment, then upload the digital receipt and reference number below.</p>
-                      </div>
-                    </div>
-                    <div className="gcash-payment-grid">
-                      <div className="gcash-qr-panel">
-                        <img src="/gcash-qr.jpg" alt="Tutok Pitik Studios GCash QR" className="gcash-qr-image" />
-                        <div className="pricing-note gcash-downpayment-note">
-                          <svg width="16" height="16" viewBox="0 0 16 16" fill="none">
-                            <path d="M8 14C11.3137 14 14 11.3137 14 8C14 4.68629 11.3137 2 8 2C4.68629 2 2 4.68629 2 8C2 11.3137 4.68629 14 8 14Z" stroke="currentColor" strokeWidth="1.5" />
-                            <path d="M8 11V8M8 5H8.01" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" />
-                          </svg>
-                          <span>Required downpayment: <strong>{`₱${downpaymentAmount.toLocaleString('en-PH', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`}</strong> (50% of the service price). Any additional transportation fee will be reflected in your Bookings tab once reviewed, while the remaining balance will still be paid on the day of the shoot.</span>
-                        </div>
-                      </div>
-                      <div className="gcash-proof-panel">
-                        <div className="form-field" style={{ marginBottom: '14px' }}>
-                          <label>GCash Reference Number *</label>
-                          <input
-                            type="text"
-                            value={paymentReference}
-                            onChange={(e) => setPaymentReference(e.target.value)}
-                            placeholder="Enter your payment reference number"
-                            disabled={!canBook}
-                          />
-                        </div>
-                        <div className="form-field" style={{ marginBottom: 0 }}>
-                          <label>Upload Digital Receipt *</label>
-                          <input
-                            type="file"
-                            accept="image/*"
-                            onChange={handlePaymentReceiptChange}
-                            disabled={!canBook}
-                          />
-                          <span className="form-help">Accepted: image files up to 3 MB.</span>
-                          {paymentReceiptError && <span className="form-help" style={{ color: 'var(--color-primary)' }}>{paymentReceiptError}</span>}
-                        </div>
-                        {paymentReceiptPreview && (
-                          <div className="payment-proof-preview">
-                            <img src={paymentReceiptPreview} alt={paymentReceiptName || 'Payment receipt preview'} />
-                            <div className="payment-proof-meta">
-                              <span>{paymentReceiptName}</span>
-                              <span>Status: Waiting for admin review</span>
-                            </div>
+                    <div className="field" data-field="receipt">
+                      <span className="field-label">Receipt screenshot</span>
+                      {receipt ? (
+                        <div className="receipt-preview">
+                          <img src={receipt.dataUrl} alt="Your GCash receipt" />
+                          <div>
+                            <strong>{receipt.name}</strong>
+                            <span>
+                              <Check size={14} aria-hidden="true" /> Ready to submit
+                            </span>
+                            <button type="button" className="btn-link btn-link-danger" onClick={() => setReceipt(null)}>
+                              <Trash2 size={14} /> Remove
+                            </button>
                           </div>
-                        )}
-                      </div>
+                        </div>
+                      ) : (
+                        <label
+                          className={`dropzone ${errors.receipt ? 'is-invalid' : ''}`}
+                          onDragOver={(event) => event.preventDefault()}
+                          onDrop={(event) => {
+                            event.preventDefault();
+                            void handleReceipt(event.dataTransfer.files?.[0]);
+                          }}
+                        >
+                          <input ref={fileRef} type="file" accept="image/*" className="sr-only" onChange={(event) => void handleReceipt(event.target.files?.[0])} />
+                          {receiptBusy ? <LoaderCircle size={22} className="spin" /> : <ImageUp size={22} aria-hidden="true" />}
+                          <span>{receiptBusy ? 'Preparing image…' : 'Tap to upload or drop your screenshot'}</span>
+                        </label>
+                      )}
+                      {errors.receipt && <p className="field-error">{errors.receipt}</p>}
                     </div>
                   </div>
-                )}
-
-                <div className="form-field">
-                  <label>Additional Notes</label>
-                  <textarea
-                    name="message"
-                    rows={4}
-                    placeholder="Tell us more about your project or any special requirements..."
-                    disabled={!canBook}
-                  ></textarea>
                 </div>
+              )}
+            </fieldset>
 
-                <button type="submit" className="btn btn-primary btn-full" disabled={!canBook}>
-                  <span>Submit Booking Request</span>
-                  <svg width="18" height="18" viewBox="0 0 18 18" fill="none">
-                    <path d="M16.5 1.5L7.5 10.5M16.5 1.5L11.25 16.5L7.5 10.5M16.5 1.5L1.5 6.75L7.5 10.5"
-                      stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" />
-                  </svg>
-                </button>
-              </form>
+            <div className="summary-inline">{summary}</div>
+
+            <button type="submit" className="btn btn-primary btn-lg btn-block" disabled={isTeam || submitting}>
+              {submitting ? <LoaderCircle size={20} className="spin" /> : <CalendarCheck size={20} />}
+              {isGuest ? 'Continue to reserve' : 'Review & submit booking'}
+            </button>
+            <p className="form-footnote">
+              <ShieldCheck size={14} aria-hidden="true" /> Your date is held once we verify your downpayment. We confirm by email.
+            </p>
+          </form>
+
+          <aside className="booking-aside">
+            <div className="summary-aside">{summary}</div>
+            <div className="contact-card">
+              <h3>Prefer to talk first?</h3>
+              <p>Ask about custom coverage, venues or group rates.</p>
+              <a href={STUDIO.socials.messenger} target="_blank" rel="noopener noreferrer" className="contact-row">
+                <MessageCircle size={18} aria-hidden="true" /> Messenger
+              </a>
+              <a href={STUDIO.phoneHref} className="contact-row">
+                <Phone size={18} aria-hidden="true" /> {STUDIO.phoneDisplay}
+              </a>
+              <a href={`mailto:${STUDIO.email}`} className="contact-row">
+                <Mail size={18} aria-hidden="true" /> {STUDIO.email}
+              </a>
+              <p className="contact-row contact-row-static">
+                <MapPin size={18} aria-hidden="true" /> {STUDIO.location}
+              </p>
             </div>
-          </div>
+          </aside>
         </div>
-      </section>
+      </div>
 
-      {showGuestPrompt && (
-        <div className="modal-overlay active" onClick={() => setShowGuestPrompt(false)}>
-          <div className="confirm-dialog guest-booking-dialog" onClick={(e) => e.stopPropagation()}>
-            <div className="confirm-icon">
-              <AlertCircle size={48} />
-            </div>
-            <h3>Booking Requires An Account</h3>
-            <p>Create an account first or sign in to continue with your booking request.</p>
-            <div className="confirm-details">
-              <p><strong>Why this is needed:</strong> Your booking, payment receipt, status updates, and profile records are all tied to your customer account.</p>
-              <p><strong>Already have an account?</strong> Sign in and continue your booking right away.</p>
-            </div>
-            <div className="confirm-actions guest-booking-actions">
-              <button
-                className="confirm-btn-cancel guest-booking-signup"
-                onClick={() => {
-                  setShowGuestPrompt(false);
-                  onShowSignup?.();
-                }}
-              >
-                Create Account
-              </button>
-              <button
-                className="confirm-btn-proceed guest-booking-login"
-                onClick={() => {
-                  setShowGuestPrompt(false);
-                  onShowLogin?.();
-                }}
-              >
-                Sign In
-              </button>
-            </div>
-          </div>
-        </div>
-      )}
+      <ConfirmDialog
+        open={confirmOpen}
+        title="Submit this booking?"
+        message="Please check the details. We will review your payment and confirm by email."
+        confirmLabel={submitting ? 'Submitting…' : 'Submit booking'}
+        icon={<CalendarCheck size={22} />}
+        onCancel={() => !submitting && setConfirmOpen(false)}
+        onConfirm={submitBooking}
+      >
+        <dl className="confirm-list">
+          <div><dt>Service</dt><dd>{service?.title}</dd></div>
+          <div><dt>Date</dt><dd>{draft.date && formatDateLong(draft.date)}</dd></div>
+          <div><dt>Time</dt><dd>{draft.start !== null && endHour ? `${formatTime(hourToTime(draft.start))} – ${formatTime(hourToTime(endHour))} (${hoursLabel(hours || 0)})` : ''}</dd></div>
+          <div><dt>Location</dt><dd>{draft.location}</dd></div>
+          <div><dt>Total</dt><dd>{formatPesoExact(total)}</dd></div>
+          <div><dt>Downpayment sent</dt><dd>{formatPesoExact(downpayment)} · Ref {reference}</dd></div>
+          <div><dt>Balance on shoot day</dt><dd>{formatPesoExact(total - downpayment)} + transportation (if any)</dd></div>
+        </dl>
+      </ConfirmDialog>
 
-      
-      {showConfirmDialog && formDataToSubmit && (
-        <div className="modal-overlay active" onClick={() => setShowConfirmDialog(false)}>
-          <div className="confirm-dialog" onClick={(e) => e.stopPropagation()}>
-            <div className="confirm-icon">
-              <AlertCircle size={48} />
-            </div>
-            <h3>Confirm Booking</h3>
-            <p>Please review your booking details before submitting.</p>
-            <div className="confirm-details">
-              <p><strong>Name:</strong> {formDataToSubmit.firstName} {formDataToSubmit.lastName}</p>
-              <p><strong>Email:</strong> {formDataToSubmit.email}</p>
-              <p><strong>Service:</strong> {formDataToSubmit.service}</p>
-              <p><strong>Date:</strong> {formDataToSubmit.date}</p>
-              <p><strong>Time:</strong> {formDataToSubmit.time}</p>
-              <p><strong>Duration:</strong> {formDataToSubmit.duration}</p>
-              <p><strong>Total:</strong> {formDataToSubmit.price}</p>
-              <p><strong>Required Downpayment:</strong> {`₱${downpaymentAmount.toLocaleString('en-PH', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`}</p>
-              <p><strong>Remaining Balance:</strong> {`₱${downpaymentAmount.toLocaleString('en-PH', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`} (payable on shoot day, plus any transportation adjustment shown later in your Bookings tab)</p>
-              <p><strong>Payment Method:</strong> GCash</p>
-              <p><strong>Reference Number:</strong> {formDataToSubmit.paymentReference}</p>
-              <p><strong>Receipt File:</strong> {formDataToSubmit.paymentReceiptName}</p>
-            </div>
-            <div className="confirm-actions">
-              <button className="confirm-btn-cancel" onClick={() => setShowConfirmDialog(false)}>
-                Cancel
-              </button>
-              <button className="confirm-btn-proceed" onClick={handleConfirmSubmit}>
-                Proceed
-              </button>
-            </div>
-          </div>
-        </div>
-      )}
-
-      
-      <Notification
-        show={notification.show}
-        type={notification.type}
-        title={notification.title}
-        message={notification.message}
-        showButton={notification.showButton}
-        buttonText={notification.buttonText}
-        onButtonClick={notification.onButtonClick}
-        onClose={() => setNotification({ show: false, type: 'info', title: '', message: '' })}
+      <Modal
+        open={authPromptOpen}
+        onClose={() => setAuthPromptOpen(false)}
+        size="sm"
+        icon={<ShieldCheck size={22} />}
+        title="Almost there"
+        description="Create a free account or sign in to pay the downpayment and reserve your date. Your selections are saved."
+        footer={
+          <>
+            <button type="button" className="btn btn-ghost" onClick={() => { setAuthPromptOpen(false); onRequireAuth('signin'); }}>
+              Sign in
+            </button>
+            <button type="button" className="btn btn-primary" data-autofocus onClick={() => { setAuthPromptOpen(false); onRequireAuth('signup'); }}>
+              Create account
+            </button>
+          </>
+        }
       />
-    </>
+    </section>
   );
 }

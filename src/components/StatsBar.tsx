@@ -1,76 +1,79 @@
-import { useState, useEffect, useRef } from 'react';
+import { useEffect, useRef, useState } from 'react';
+import { Camera, Images, Sparkles, CalendarCheck } from 'lucide-react';
+import { SERVICES, STATS } from '../content/site';
+
+const ITEMS = [
+  { icon: Camera, value: STATS.clients, suffix: '+', label: 'Clients photographed' },
+  { icon: Images, value: STATS.projects, suffix: '+', label: 'Featured projects' },
+  { icon: CalendarCheck, value: STATS.years, suffix: '', label: STATS.years === 1 ? 'Year shooting' : 'Years shooting' },
+  { icon: Sparkles, value: SERVICES.length, suffix: '', label: 'Session types' },
+];
+
+function useCountUp(target: number, start: boolean) {
+  const [value, setValue] = useState(0);
+  useEffect(() => {
+    if (!start) return;
+    if (window.matchMedia('(prefers-reduced-motion: reduce)').matches) {
+      setValue(target);
+      return;
+    }
+    let frame = 0;
+    const startedAt = performance.now();
+    const duration = 1400;
+    const tick = (now: number) => {
+      const progress = Math.min(1, (now - startedAt) / duration);
+      setValue(Math.round(target * (1 - Math.pow(1 - progress, 3))));
+      if (progress < 1) frame = requestAnimationFrame(tick);
+    };
+    frame = requestAnimationFrame(tick);
+    return () => cancelAnimationFrame(frame);
+  }, [target, start]);
+  return value;
+}
+
+function Stat({ item, start }: { item: (typeof ITEMS)[number]; start: boolean }) {
+  const value = useCountUp(item.value, start);
+  const Icon = item.icon;
+  return (
+    <li className="trust-item">
+      <Icon size={22} aria-hidden="true" />
+      <div>
+        <strong>
+          {value}
+          {item.suffix}
+        </strong>
+        <span>{item.label}</span>
+      </div>
+    </li>
+  );
+}
 
 export default function StatsBar() {
-  const [countersAnimated, setCountersAnimated] = useState(false);
-  const statsRef = useRef<HTMLElement>(null);
+  const ref = useRef<HTMLUListElement>(null);
+  const [visible, setVisible] = useState(false);
 
   useEffect(() => {
+    if (!ref.current) return;
     const observer = new IntersectionObserver(
-      (entries) => {
-        entries.forEach(entry => {
-          if (entry.isIntersecting && !countersAnimated) {
-            animateCounters();
-            setCountersAnimated(true);
-          }
-        });
-      },
-      { threshold: 0.5 }
-    );
-
-    if (statsRef.current) {
-      observer.observe(statsRef.current);
-    }
-
-    return () => observer.disconnect();
-  }, [countersAnimated]);
-
-  const animateCounters = () => {
-    const stats = [
-      { id: 'stat-projects', target: 16 },
-      { id: 'stat-clients', target: 103 },
-      { id: 'stat-years', target: 3 }
-    ];
-
-    stats.forEach(stat => {
-      const element = document.getElementById(stat.id);
-      if (!element) return;
-
-      const duration = 2000;
-      const increment = stat.target / (duration / 16);
-      let current = 0;
-
-      const updateCounter = () => {
-        current += increment;
-        if (current < stat.target) {
-          element.textContent = Math.floor(current).toString();
-          requestAnimationFrame(updateCounter);
-        } else {
-          element.textContent = stat.target.toString();
+      ([entry]) => {
+        if (entry.isIntersecting) {
+          setVisible(true);
+          observer.disconnect();
         }
-      };
-
-      updateCounter();
-    });
-  };
+      },
+      { threshold: 0.4 }
+    );
+    observer.observe(ref.current);
+    return () => observer.disconnect();
+  }, []);
 
   return (
-    <section className="stats-bar" ref={statsRef}>
-      <div className="stats-container">
-        <div className="stat-item">
-          <div className="stat-number" id="stat-projects">0</div>
-          <div className="stat-label">Projects</div>
-        </div>
-        <div className="stat-divider"></div>
-        <div className="stat-item">
-          <div className="stat-number" id="stat-clients">0</div>
-          <div className="stat-label">Clients</div>
-        </div>
-        <div className="stat-divider"></div>
-        <div className="stat-item">
-          <div className="stat-number" id="stat-years">0</div>
-          <div className="stat-label">Years</div>
-        </div>
-      </div>
+    <section className="trust-bar" aria-label="Studio in numbers">
+      <ul ref={ref} className="container trust-list">
+        {ITEMS.map((item) => (
+          <Stat key={item.label} item={item} start={visible} />
+        ))}
+      </ul>
     </section>
   );
 }

@@ -1,182 +1,149 @@
-import { useEffect, useState } from 'react';
-import { Heart } from 'lucide-react';
-import { portfolioImages } from './Portfolio';
-import { supabase } from '../lib/supabase';
-import { getStoredFavorites, mergeFavorites, saveStoredFavorites } from '../lib/favorites';
+import { useEffect, useRef, useState } from 'react';
+import { CalendarCheck, ChevronLeft, ChevronRight, Heart, X } from 'lucide-react';
+import { toast } from 'sonner';
+import Picture from './common/Picture';
+import { useModal } from '../hooks/useModal';
+import { categoryLabel, itemMatchesKey, subCategoryLabel, type PortfolioItem } from '../content/portfolio';
+import { serviceForPortfolio } from '../content/site';
+import { useFavorites } from '../lib/useFavorites';
 
 interface LightboxProps {
-  active: boolean;
-  currentIndex: number;
+  items: PortfolioItem[];
+  index: number;
+  onIndexChange: (index: number) => void;
   onClose: () => void;
-  onNavigate: (index: number) => void;
   user: any;
-  images?: any[];
+  onRequireSignIn: () => void;
+  onBookSimilar: (serviceId: string) => void;
 }
 
-export default function Lightbox({ active, currentIndex, onClose, onNavigate, user, images = portfolioImages }: LightboxProps) {
-  const [favorites, setFavorites] = useState<string[]>([]);
+export default function Lightbox({ items, index, onIndexChange, onClose, user, onRequireSignIn, onBookSimilar }: LightboxProps) {
+  const ref = useModal<HTMLDivElement>(true, onClose);
+  const { favorites, toggle } = useFavorites(user);
+  const touchStart = useRef<{ x: number; y: number } | null>(null);
+  const [loaded, setLoaded] = useState(false);
+  const count = items.length;
+  const item = items[index] || items[0];
 
-  const galleryImages = images.length > 0 ? images : portfolioImages;
+  const go = (delta: number) => {
+    if (count < 2) return;
+    setLoaded(false);
+    onIndexChange((index + delta + count) % count);
+  };
 
   useEffect(() => {
-    if (!active) return;
-
-    const handleKeyDown = (e: KeyboardEvent) => {
-      if (e.key === 'Escape') onClose();
-      if (e.key === 'ArrowLeft') showPrev();
-      if (e.key === 'ArrowRight') showNext();
+    const onKey = (event: KeyboardEvent) => {
+      if (event.key === 'ArrowLeft') go(-1);
+      if (event.key === 'ArrowRight') go(1);
     };
+    document.addEventListener('keydown', onKey);
+    return () => document.removeEventListener('keydown', onKey);
+  });
 
-    const handleBodyScroll = () => {
-      document.body.style.overflow = active ? 'hidden' : 'auto';
-    };
+  if (!item) return null;
 
-    handleBodyScroll();
-    document.addEventListener('keydown', handleKeyDown);
+  const isCustomer = user && user.role === 'customer';
+  const isGuest = !user || user.role === 'guest';
+  const isFavorite = favorites.some((key) => itemMatchesKey(item, key));
+  const label = subCategoryLabel(item.category, item.subCategory) || categoryLabel(item.category);
 
-    return () => {
-      document.body.style.overflow = 'auto';
-      document.removeEventListener('keydown', handleKeyDown);
-    };
-  }, [active, currentIndex]);
-
-  useEffect(() => {
-    const loadFavorites = async () => {
-      if (!user || user.id === 'guest') {
-        setFavorites([]);
-        return;
-      }
-
-      const localFavorites = getStoredFavorites(user.id);
-      setFavorites(localFavorites);
-
-      try {
-        const { data: loadedFavorites, error } = await supabase
-          .from('favorites')
-          .select('image_id')
-          .eq('user_id', user.id);
-
-        if (!error) {
-          const favoriteIds = (loadedFavorites || []).map((item: any) => item.image_id).filter(Boolean);
-          const mergedFavorites = mergeFavorites(localFavorites, favoriteIds);
-          setFavorites(mergedFavorites);
-          saveStoredFavorites(user.id, mergedFavorites);
-        }
-      } catch (error) {
-        console.error('Error loading favorites:', error);
-      }
-    };
-
-    loadFavorites();
-  }, [user, active]);
-
-  const showPrev = () => {
-    onNavigate((currentIndex - 1 + galleryImages.length) % galleryImages.length);
-  };
-
-  const showNext = () => {
-    onNavigate((currentIndex + 1) % galleryImages.length);
-  };
-
-  const toggleFavorite = async () => {
-    if (!user || user.id === 'guest') {
-      alert('Please log in to save favorites');
+  const handleFavorite = async () => {
+    if (isGuest) {
+      toast('Sign in to save favorites', { description: 'Create a free account to keep a shortlist of looks you love.' });
+      onRequireSignIn();
       return;
     }
-
-    // Only customers can have favorites
-    if (user.role !== 'customer') {
-      return;
-    }
-
-    const currentImage = galleryImages[currentIndex] || galleryImages[0];
-    const imageId = currentImage.id;
-    const legacyImageId = currentImage.src || currentImage.url || currentImage.imageData;
-    const isPersistableFavorite = typeof imageId === 'string' && !String(imageId).startsWith('default-');
-    
-    try {
-      // Optimistically update UI
-      let updatedFavorites: string[];
-      const hasFavorite = favorites.includes(imageId) || favorites.includes(legacyImageId);
-      if (hasFavorite) {
-        updatedFavorites = favorites.filter(id => id !== imageId && id !== legacyImageId);
-      } else {
-        updatedFavorites = [...favorites, imageId];
-      }
-      setFavorites(updatedFavorites);
-      saveStoredFavorites(user.id, updatedFavorites);
-
-      if (!isPersistableFavorite) {
-        return;
-      }
-
-      if (hasFavorite) {
-        const { error } = await supabase
-          .from('favorites')
-          .delete()
-          .eq('user_id', user.id)
-          .eq('image_id', imageId);
-
-        if (error) {
-          console.error('Failed to remove favorite from Supabase:', error);
-        }
-      } else {
-        const { error } = await supabase
-          .from('favorites')
-          .upsert({
-            user_id: user.id,
-            image_id: imageId,
-          }, { onConflict: 'user_id,image_id' });
-
-        if (error) {
-          console.error('Failed to save favorite to Supabase:', error);
-        }
-      }
-    } catch (error) {
-      console.error('Error toggling favorite in backend:', error);
-    }
+    if (!isCustomer) return;
+    const added = await toggle(item);
+    toast.success(added ? 'Saved to your favorites' : 'Removed from favorites');
   };
-
-  if (!active) return null;
-
-  const currentImage = galleryImages[currentIndex] || galleryImages[0];
-  const isFavorite = favorites.includes(currentImage.id) || favorites.includes(currentImage.src);
-  const canFavorite = user && user.id !== 'guest' && user.role === 'customer';
 
   return (
-    <div className={`lightbox ${active ? 'active' : ''}`} onClick={onClose}>
-      <button className="lightbox-close" onClick={onClose}>
-        <svg width="24" height="24" viewBox="0 0 24 24" fill="none">
-          <path d="M18 6L6 18M6 6L18 18" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" />
-        </svg>
-      </button>
-      {canFavorite && (
-        <button 
-          className={`lightbox-favorite ${isFavorite ? 'active' : ''}`}
-          onClick={(e) => { e.stopPropagation(); toggleFavorite(); }}
-          title={isFavorite ? 'Remove from favorites' : 'Add to favorites'}
-        >
-          <Heart size={24} fill={isFavorite ? 'currentColor' : 'none'} />
-        </button>
-      )}
-      <button className="lightbox-nav lightbox-prev" onClick={(e) => { e.stopPropagation(); showPrev(); }}>
-        <svg width="24" height="24" viewBox="0 0 24 24" fill="none">
-          <path d="M15 18L9 12L15 6" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round" />
-        </svg>
-      </button>
-      <button className="lightbox-nav lightbox-next" onClick={(e) => { e.stopPropagation(); showNext(); }}>
-        <svg width="24" height="24" viewBox="0 0 24 24" fill="none">
-          <path d="M9 18L15 12L9 6" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round" />
-        </svg>
-      </button>
-      <div className="lightbox-content" onClick={(e) => e.stopPropagation()}>
-        <img src={currentImage.src || currentImage.url || currentImage.imageData} alt={currentImage.title} id="lightboxImg" />
-        <div className="lightbox-info">
-          <h3>{currentImage.title}</h3>
-          <p>{String(currentImage.category || '').toUpperCase()}</p>
+    <div
+      ref={ref}
+      className="lightbox"
+      role="dialog"
+      aria-modal="true"
+      aria-label={`${item.title} (${index + 1} of ${count})`}
+      tabIndex={-1}
+      onTouchStart={(event) => {
+        const touch = event.touches[0];
+        touchStart.current = { x: touch.clientX, y: touch.clientY };
+      }}
+      onTouchEnd={(event) => {
+        if (!touchStart.current) return;
+        const touch = event.changedTouches[0];
+        const dx = touch.clientX - touchStart.current.x;
+        const dy = touch.clientY - touchStart.current.y;
+        touchStart.current = null;
+        if (Math.abs(dx) > 50 && Math.abs(dx) > Math.abs(dy)) go(dx < 0 ? 1 : -1);
+        else if (dy > 90 && Math.abs(dy) > Math.abs(dx)) onClose();
+      }}
+    >
+      <div className="lightbox-backdrop" onClick={onClose} aria-hidden="true" />
+
+      <div className="lightbox-top">
+        <span className="lightbox-counter">
+          {index + 1} / {count}
+        </span>
+        <div className="lightbox-top-actions">
+          {(isCustomer || isGuest) && (
+            <button type="button" className={`icon-btn lightbox-fav ${isFavorite ? 'is-active' : ''}`} onClick={handleFavorite} aria-pressed={isFavorite} aria-label={isFavorite ? 'Remove from favorites' : 'Save to favorites'}>
+              <Heart size={20} fill={isFavorite ? 'currentColor' : 'none'} />
+            </button>
+          )}
+          <button type="button" className="icon-btn" onClick={onClose} aria-label="Close viewer" data-autofocus>
+            <X size={22} />
+          </button>
         </div>
       </div>
-      <div className="lightbox-counter">{currentIndex + 1} / {galleryImages.length}</div>
+
+      <figure className="lightbox-figure">
+        <Picture
+          key={item.id}
+          item={item}
+          size="large"
+          loading="eager"
+          className={`lightbox-image ${loaded ? 'is-loaded' : ''}`}
+          onLoad={() => setLoaded(true)}
+          alt={`${item.title}${item.description ? ` — ${item.description}` : ''}`}
+        />
+        <figcaption className="lightbox-caption">
+          <div>
+            <span className="lightbox-label">{label}</span>
+            <h3>{item.title}</h3>
+            {item.description && <p>{item.description}</p>}
+          </div>
+          <button
+            type="button"
+            className="btn btn-primary"
+            onClick={() => {
+              onBookSimilar(serviceForPortfolio(item.category, item.subCategory));
+              onClose();
+            }}
+          >
+            <CalendarCheck size={18} />
+            Book a shoot like this
+          </button>
+        </figcaption>
+      </figure>
+
+      {count > 1 && (
+        <>
+          {/* Hidden neighbours so next/previous feel instant. */}
+          <div className="lightbox-preload" aria-hidden="true">
+            {[items[(index + 1) % count], items[(index - 1 + count) % count]].map((neighbour) => (
+              <Picture key={neighbour.id} item={neighbour} size="large" loading="eager" alt="" />
+            ))}
+          </div>
+          <button type="button" className="lightbox-nav lightbox-prev" onClick={() => go(-1)} aria-label="Previous photo">
+            <ChevronLeft size={28} />
+          </button>
+          <button type="button" className="lightbox-nav lightbox-next" onClick={() => go(1)} aria-label="Next photo">
+            <ChevronRight size={28} />
+          </button>
+        </>
+      )}
     </div>
   );
 }

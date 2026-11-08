@@ -1,47 +1,25 @@
-import { useState, useEffect } from 'react';
+import { useEffect, useState } from 'react';
+import { ArrowUp } from 'lucide-react';
 
 export default function ScrollToTop() {
   const [visible, setVisible] = useState(false);
 
   useEffect(() => {
-    let ticking = false;
-
-    const updateVisibility = () => {
-      setVisible(window.scrollY > 220);
-      ticking = false;
-    };
-
-    const handleScroll = () => {
-      if (!ticking) {
-        window.requestAnimationFrame(updateVisibility);
-        ticking = true;
-      }
-    };
-
-    updateVisibility();
-    window.addEventListener('scroll', handleScroll, { passive: true });
-    return () => window.removeEventListener('scroll', handleScroll);
+    const onScroll = () => setVisible(window.scrollY > 900);
+    onScroll();
+    window.addEventListener('scroll', onScroll, { passive: true });
+    return () => window.removeEventListener('scroll', onScroll);
   }, []);
-
-  const scrollToTop = () => {
-    const prefersReducedMotion = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
-    window.scrollTo({
-      top: 0,
-      behavior: prefersReducedMotion ? 'auto' : 'smooth'
-    });
-  };
 
   return (
     <button
-      id="scrollToTop"
-      className={`scroll-to-top ${visible ? 'visible' : ''}`}
-      onClick={scrollToTop}
-      aria-label="Scroll to top"
+      type="button"
+      className={`scroll-top ${visible ? 'is-visible' : ''}`}
+      aria-label="Back to top"
+      tabIndex={visible ? 0 : -1}
+      onClick={() => window.scrollTo({ top: 0, behavior: 'smooth' })}
     >
-      <svg width="20" height="20" viewBox="0 0 24 24" fill="none">
-        <path d="M12 19V5M12 5L5 12M12 5L19 12" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"/>
-      </svg>
-      <span>Top</span>
+      <ArrowUp size={20} />
     </button>
   );
 }

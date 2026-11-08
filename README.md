@@ -55,6 +55,11 @@ npm run build
 
 The optimized website is generated in `dist/`. Netlify is configured to run the same command and publish that directory with SPA routing and baseline browser security headers.
 
+Run `npm run typecheck` and `npm run test:edge-access` before releasing changes.
+The production release branch is `codex/supabase-migration`. The active Supabase
+project and migration verification, recovery notes, and email limitation are
+documented in [the migration handoff](docs/SUPABASE-MIGRATION-2026-11-08.md).
+
 ## Repository safety
 
 Environment files, dependency directories, generated builds, local Netlify state, logs, and operating-system metadata are excluded from version control. Keep Supabase service-role keys, provider credentials, SMTP passwords, and other server secrets in the deployment environment only; never place them in browser variables or commit them to this repository.

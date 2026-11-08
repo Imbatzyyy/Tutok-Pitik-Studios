@@ -1,208 +1,93 @@
-import { useState, useEffect } from 'react';
+import { lazy, Suspense, useCallback, useEffect, useMemo, useState } from 'react';
+import { Toaster, toast } from 'sonner';
 import Navigation from './components/Navigation';
 import Hero from './components/Hero';
 import StatsBar from './components/StatsBar';
-import About from './components/About';
+import Portfolio from './components/Portfolio';
 import Services from './components/Services';
-import Portfolio, { portfolioImages as defaultPortfolioImages } from './components/Portfolio';
-import Contact from './components/Contact';
+import Pricing from './components/Pricing';
+import Process from './components/Process';
+import About from './components/About';
+import Testimonials from './components/Testimonials';
+import FAQ from './components/FAQ';
+import Contact, { type BookingPrefill, type BookingSuccess } from './components/Contact';
 import Footer from './components/Footer';
-import Lightbox from './components/Lightbox';
-import SuccessModal from './components/SuccessModal';
+import FloatingContact from './components/FloatingContact';
 import ScrollToTop from './components/ScrollToTop';
-import Auth from './components/Auth';
-import UserProfile from './components/UserProfile';
-import AdminDashboard from './components/AdminDashboard';
-import LoadingScreen from './components/LoadingScreen';
-import ResetPasswordPage from './components/ResetPasswordPage';
-import { supabase } from './lib/supabase';
-import type { User } from './lib/types';
-import './styles/globals.css';
+import type { AuthView } from './components/Auth';
+import type { ProfileTab } from './components/UserProfile';
+import { DEFAULT_PORTFOLIO, normalizePortfolioRow, type PortfolioItem } from './content/portfolio';
+import { dayState, earliestBookableDate, useAvailability } from './lib/availability';
+import { toDateKey } from './lib/format';
+import { scrollToSection } from './lib/scroll';
+import { GUEST_USER, InactiveAccountError, resolveSessionUser, type SessionUser } from './lib/session';
+import { isDemoMode, supabase } from './lib/supabase';
 
-interface ModalData {
-  fullName: string;
-  email: string;
-  phone: string;
-  service: string;
-  date: string;
-  startTime: string;
-  endTime: string;
-  duration: number;
-  price: number;
-  transportation: number;
-  totalPrice: number;
-  location: string;
-  message?: string;
-}
+const Auth = lazy(() => import('./components/Auth'));
+const UserProfile = lazy(() => import('./components/UserProfile'));
+const AdminDashboard = lazy(() => import('./components/admin/AdminDashboard'));
+const Lightbox = lazy(() => import('./components/Lightbox'));
+const SuccessModal = lazy(() => import('./components/SuccessModal'));
+const ResetPasswordPage = lazy(() => import('./components/ResetPasswordPage'));
 
-export default function App() {
-  const [isLoading, setIsLoading] = useState(true);
-  const [lightboxActive, setLightboxActive] = useState(false);
-  const [currentImageIndex, setCurrentImageIndex] = useState(0);
-  const [modalActive, setModalActive] = useState(false);
-  const [modalData, setModalData] = useState<ModalData | null>(null);
-  const [authModalOpen, setAuthModalOpen] = useState(false);
-  const [authModalView, setAuthModalView] = useState<'signin' | 'signup' | 'reset'>('signin');
-  const [profileModalOpen, setProfileModalOpen] = useState(false);
-  const [adminDashboardOpen, setAdminDashboardOpen] = useState(false);
-  const [user, setUser] = useState<User | null>(null);
-  const [portfolioCatalog, setPortfolioCatalog] = useState(defaultPortfolioImages);
+const TEAM_ROLES = ['superadmin', 'admin', 'staff'];
 
-  useEffect(() => {
-    const link = document.createElement('link');
-    link.href = 'https://fonts.googleapis.com/css2?family=Syne:wght@400;500;600;700;800&family=Inter:wght@300;400;500;600;700&display=swap';
-    link.rel = 'stylesheet';
-    document.head.appendChild(link);
-  }, []);
+function Site() {
+  const [user, setUser] = useState<SessionUser>(GUEST_USER);
+  const [portfolio, setPortfolio] = useState<PortfolioItem[]>(DEFAULT_PORTFOLIO);
+  const [lightbox, setLightbox] = useState<{ items: PortfolioItem[]; index: number } | null>(null);
+  const [success, setSuccess] = useState<BookingSuccess | null>(null);
+  const [auth, setAuth] = useState<{ open: boolean; view: AuthView; intent?: 'booking' }>({ open: false, view: 'signin' });
+  const [profile, setProfile] = useState<{ open: boolean; tab?: ProfileTab }>({ open: false });
+  const [adminOpen, setAdminOpen] = useState(false);
+  const [prefill, setPrefill] = useState<BookingPrefill | null>(null);
+  const availability = useAvailability();
 
-  const buildUserFromProfile = (userProfile: any, authUser?: any): User => ({
-    id: userProfile.id,
-    firstName: userProfile.full_name?.split(' ')[0] || '',
-    lastName: userProfile.full_name?.split(' ').slice(1).join(' ') || '',
-    username: userProfile.username || authUser?.user_metadata?.username || '',
-    fullName: userProfile.full_name,
-    email: userProfile.email,
-    phone: userProfile.phone || authUser?.user_metadata?.phone || '',
-    role: userProfile.role,
-    profilePicture: userProfile.profile_picture_url || authUser?.user_metadata?.profile_picture_url || '',
-    joinDate: userProfile.created_at
-  });
-
-
-  const buildUserFromAuthUser = (authUser: any): User => ({
-    id: authUser.id,
-    firstName: authUser.user_metadata?.full_name?.split(' ')[0] || '',
-    lastName: authUser.user_metadata?.full_name?.split(' ').slice(1).join(' ') || '',
-    username: authUser.user_metadata?.username || '',
-    fullName: authUser.user_metadata?.full_name || authUser.email?.split('@')[0] || 'User',
-    email: authUser.email || '',
-    phone: authUser.user_metadata?.phone || '',
-    role: authUser.user_metadata?.role || 'customer',
-    profilePicture: authUser.user_metadata?.profile_picture_url || '',
-    joinDate: authUser.created_at || new Date().toISOString(),
-  });
-
-  const resolveSessionUser = async (authUser: any) => {
-    const userProfile = await fetchUserProfileWithRetry(authUser.id);
-    return userProfile ? buildUserFromProfile(userProfile, authUser) : buildUserFromAuthUser(authUser);
-  };
-
-  const normalizePortfolioImage = (item: any, index: number) => ({
-    id: item.id || `portfolio-${index}`,
-    src: item.src || item.image_url || item.url || item.imageData || '',
-    url: item.url || item.image_url || item.src || item.imageData || '',
-    imageData: item.imageData || item.image_url || item.url || item.src || '',
-    category: item.category || 'portrait',
-    subCategory: item.subCategory || item.subcategory || 'street',
-    title: item.title || `Portfolio Item ${index + 1}`,
-    description: item.description || '',
-  });
-
-  const loadPortfolioCatalog = async () => {
+  const loadPortfolio = useCallback(async () => {
     try {
       const { data, error } = await supabase
         .from('portfolio_images')
         .select('*')
         .order('display_order', { ascending: true })
         .order('created_at', { ascending: true });
-
-      if (error) {
-        console.error('Error loading portfolio catalog from Supabase:', error);
-        setPortfolioCatalog(defaultPortfolioImages);
+      if (error || !data || data.length === 0) {
+        setPortfolio(DEFAULT_PORTFOLIO);
         return;
       }
-
-      const items = Array.isArray(data) ? data : [];
-      if (items.length === 0) {
-        setPortfolioCatalog(defaultPortfolioImages);
-        return;
-      }
-
-      setPortfolioCatalog(items.map(normalizePortfolioImage));
-    } catch (error) {
-      console.error('Error loading portfolio catalog:', error);
-      setPortfolioCatalog(defaultPortfolioImages);
+      setPortfolio(data.map(normalizePortfolioRow).filter((item) => item.src));
+    } catch {
+      setPortfolio(DEFAULT_PORTFOLIO);
     }
-  };
-
-  const fetchUserProfileWithRetry = async (userId: string, retries = 5, delayMs = 400) => {
-    for (let attempt = 0; attempt < retries; attempt += 1) {
-      const { data: userProfile, error: profileError } = await supabase
-        .from('users')
-        .select('*')
-        .eq('id', userId)
-        .maybeSingle();
-
-      if (!profileError && userProfile) {
-        return userProfile;
-      }
-
-      if (attempt < retries - 1) {
-        await new Promise((resolve) => setTimeout(resolve, delayMs * (attempt + 1)));
-      }
-    }
-
-    return null;
-  };
-
-  const openAuthModal = (view: 'signin' | 'signup' | 'reset' = 'signin') => {
-    setAuthModalView(view);
-    setAuthModalOpen(true);
-  };
-
-  useEffect(() => {
-    loadPortfolioCatalog();
   }, []);
 
   useEffect(() => {
+    void loadPortfolio();
+  }, [loadPortfolio]);
+
+  useEffect(() => {
     let cancelled = false;
-
-    const applyResolvedUser = async (authUser: any) => {
-      const resolvedUser = await resolveSessionUser(authUser);
-      if (!cancelled) {
-        setUser(resolvedUser);
-      }
-    };
-
-    const initializeAuth = async () => {
+    const apply = async (authUser: any) => {
       try {
-        console.log('Initializing Supabase auth...');
-
-        const { data: { session }, error } = await supabase.auth.getSession();
-
-        if (error) {
-          console.error('Error getting session:', error);
-          if (!cancelled) setGuestUser();
-          return;
-        }
-
-        if (session?.user) {
-          console.log('Active session found, resolving user session...');
-          await applyResolvedUser(session.user);
-        } else if (!cancelled) {
-          console.log('No active session, setting guest user');
-          setGuestUser();
-        }
+        const resolved = await resolveSessionUser(authUser);
+        if (!cancelled) setUser(resolved);
       } catch (error) {
-        console.error('Auth initialization error:', error);
-        if (!cancelled) setGuestUser();
+        if (cancelled) return;
+        setUser(GUEST_USER);
+        if (error instanceof InactiveAccountError) toast.error(error.message, { id: 'inactive-account' });
       }
     };
 
-    initializeAuth();
+    supabase.auth
+      .getSession()
+      .then(({ data: { session } }) => {
+        if (session?.user) void apply(session.user);
+      })
+      .catch(() => undefined);
 
     const { data: { subscription } } = supabase.auth.onAuthStateChange((event, session) => {
-      console.log('Auth state changed:', event);
-
-      void (async () => {
-        if (cancelled) return;
-
-        if ((event === 'INITIAL_SESSION' || event === 'SIGNED_IN' || event === 'TOKEN_REFRESHED' || event === 'USER_UPDATED') && session?.user) {
-          await applyResolvedUser(session.user);
-        } else if (event === 'SIGNED_OUT' && !cancelled) {
-          setGuestUser();
-        }
-      })();
+      if (cancelled) return;
+      if (event === 'SIGNED_OUT') setUser(GUEST_USER);
+      else if (session?.user && (event === 'SIGNED_IN' || event === 'USER_UPDATED')) void apply(session.user);
     });
 
     return () => {
@@ -211,123 +96,145 @@ export default function App() {
     };
   }, []);
 
-  const setGuestUser = () => {
-    const guestUser: User = {
-      id: 'guest',
-      fullName: 'Guest User',
-      email: '',
-      role: 'guest'
-    };
-    setUser(guestUser);
-  };
+  const nextOpenDate = useMemo(() => {
+    if (availability.status !== 'ready' || !availability.hasSlots) return null;
+    const date = earliestBookableDate();
+    for (let offset = 0; offset < 60; offset += 1) {
+      const key = toDateKey(date);
+      const state = dayState(key, availability);
+      if (state === 'open' || state === 'limited') {
+        return date.toLocaleDateString('en-US', { weekday: 'short', month: 'short', day: 'numeric' });
+      }
+      date.setDate(date.getDate() + 1);
+    }
+    return null;
+  }, [availability]);
 
-  const handleAuthSuccess = (userData: User) => {
-    setUser(userData);
-    setAuthModalOpen(false);
+  const goToBooking = useCallback((serviceId?: string, hours?: number) => {
+    if (serviceId || hours) setPrefill({ serviceId, hours, nonce: Date.now() });
+    window.setTimeout(() => scrollToSection('contact'), 0);
+  }, []);
+
+  const openAuth = (view: AuthView = 'signin', intent?: 'booking') => setAuth({ open: true, view, intent });
+
+  const handleAuthSuccess = (nextUser: SessionUser) => {
+    setUser(nextUser);
+    toast.success(`Welcome, ${nextUser.firstName || nextUser.fullName}!`);
+    if (auth.intent === 'booking' && nextUser.role === 'customer') {
+      window.setTimeout(() => scrollToSection('contact'), 150);
+    }
   };
 
   const handleLogout = async () => {
     try {
-      console.log('Logging out...');
-      const { error } = await supabase.auth.signOut();
-      if (error) {
-        console.error('Logout error:', error);
-      }
-      setGuestUser();
-      setProfileModalOpen(false);
-      setAdminDashboardOpen(false);
-    } catch (error) {
-      console.error('Logout error:', error);
-      setGuestUser();
+      await supabase.auth.signOut();
+    } catch {
+      /* sign out locally anyway */
     }
+    setUser(GUEST_USER);
+    setProfile({ open: false });
+    setAdminOpen(false);
+    toast('Signed out');
   };
 
-  const handleUpdateUser = (updatedUser: User) => {
-    setUser(updatedUser);
-  };
-
-  const handleOpenLightbox = (index: number) => {
-    setCurrentImageIndex(index);
-    setLightboxActive(true);
-  };
-
-  const handleBookingSuccess = (data: ModalData) => {
-    setModalData(data);
-    setModalActive(true);
-  };
-
-  const handleLoadingComplete = () => {
-    setIsLoading(false);
-  };
-
-  if (window.location.pathname === '/reset-password') {
-    return <ResetPasswordPage />;
-  }
-
-  if (isLoading) {
-    return <LoadingScreen onLoadingComplete={handleLoadingComplete} />;
-  }
+  const isTeam = TEAM_ROLES.includes(user.role);
 
   return (
     <div className="App">
-      <Navigation 
-        onOpenAuth={() => openAuthModal('signin')}
-        onOpenProfile={() => setProfileModalOpen(true)}
-        onOpenAdmin={() => setAdminDashboardOpen(true)}
+      <a className="skip-link" href="#contact">
+        Skip to booking
+      </a>
+      {isDemoMode && <div className="demo-banner">Demo mode · local test data only</div>}
+
+      <Navigation
         user={user}
-      />
-      <Hero onOpenAuth={() => openAuthModal('signin')} />
-      <StatsBar />
-      <About />
-      <Services />
-      <Portfolio onOpenLightbox={handleOpenLightbox} images={portfolioCatalog} />
-      <Contact 
-        onSuccess={handleBookingSuccess}
-        user={user}
-        onShowLogin={() => openAuthModal('signin')}
-        onShowSignup={() => openAuthModal('signup')}
-      />
-      <Footer />
-
-      <Lightbox
-        active={lightboxActive}
-        currentIndex={currentImageIndex}
-        onClose={() => setLightboxActive(false)}
-        onNavigate={setCurrentImageIndex}
-        user={user}
-        images={portfolioCatalog}
+        onOpenAuth={() => openAuth('signin')}
+        onOpenProfile={() => setProfile({ open: true })}
+        onOpenAdmin={isTeam ? () => setAdminOpen(true) : undefined}
+        onBook={() => goToBooking()}
       />
 
-      <SuccessModal
-        active={modalActive}
-        data={modalData}
-        onClose={() => setModalActive(false)}
-      />
+      <main>
+        <Hero nextOpenDate={nextOpenDate} onBook={() => goToBooking()} />
+        <StatsBar />
+        <Portfolio items={portfolio} onOpen={(items, index) => setLightbox({ items, index })} />
+        <Services onBook={(serviceId) => goToBooking(serviceId)} />
+        <Pricing onBook={(serviceId, hours) => goToBooking(serviceId, hours)} />
+        <Process onBook={() => goToBooking()} />
+        <About />
+        <Testimonials />
+        <FAQ />
+        <Contact
+          user={user}
+          availability={availability}
+          prefill={prefill}
+          onSuccess={setSuccess}
+          onRequireAuth={(view) => openAuth(view, 'booking')}
+          onUserUpdated={setUser}
+        />
+      </main>
 
-      <Auth
-        isOpen={authModalOpen}
-        onClose={() => setAuthModalOpen(false)}
-        onSuccess={handleAuthSuccess}
-        defaultView={authModalView}
-      />
-
-      <UserProfile
-        isOpen={profileModalOpen}
-        onClose={() => setProfileModalOpen(false)}
-        user={user}
-        onLogout={handleLogout}
-        onUpdateUser={handleUpdateUser}
-        portfolioImagesCatalog={portfolioCatalog}
-      />
-
-      <AdminDashboard
-        isOpen={adminDashboardOpen}
-        onClose={() => setAdminDashboardOpen(false)}
-        user={user}
-        onPortfolioUpdated={loadPortfolioCatalog}
-      />
-
+      <Footer onBook={(serviceId) => goToBooking(serviceId)} />
+      <FloatingContact />
       <ScrollToTop />
+
+      <Suspense fallback={null}>
+        {lightbox && (
+          <Lightbox
+            items={lightbox.items}
+            index={lightbox.index}
+            onIndexChange={(index) => setLightbox((current) => (current ? { ...current, index } : current))}
+            onClose={() => setLightbox(null)}
+            user={user}
+            onRequireSignIn={() => {
+              setLightbox(null);
+              openAuth('signin');
+            }}
+            onBookSimilar={(serviceId) => {
+              setProfile({ open: false });
+              goToBooking(serviceId);
+            }}
+          />
+        )}
+        {success && (
+          <SuccessModal
+            booking={success}
+            onClose={() => setSuccess(null)}
+            onViewBookings={() => {
+              setSuccess(null);
+              setProfile({ open: true, tab: 'bookings' });
+            }}
+          />
+        )}
+        {auth.open && <Auth isOpen defaultView={auth.view} onClose={() => setAuth((current) => ({ ...current, open: false }))} onSuccess={handleAuthSuccess} />}
+        {profile.open && user.role !== 'guest' && (
+          <UserProfile
+            isOpen
+            initialTab={profile.tab}
+            user={user}
+            catalog={portfolio}
+            onClose={() => setProfile({ open: false })}
+            onLogout={handleLogout}
+            onUpdateUser={setUser}
+            onBook={() => goToBooking()}
+            onOpenGallery={(items, index) => setLightbox({ items, index })}
+          />
+        )}
+        {adminOpen && isTeam && <AdminDashboard user={user} onClose={() => setAdminOpen(false)} onPortfolioUpdated={loadPortfolio} onLogout={handleLogout} />}
+      </Suspense>
+
+      <Toaster theme="dark" position="top-center" richColors closeButton toastOptions={{ duration: 4500 }} />
     </div>
   );
+}
+
+export default function App() {
+  if (window.location.pathname === '/reset-password') {
+    return (
+      <Suspense fallback={null}>
+        <ResetPasswordPage />
+      </Suspense>
+    );
+  }
+  return <Site />;
 }

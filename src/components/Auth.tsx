@@ -1,975 +1,312 @@
-import React, { useEffect, useState } from 'react';
-import { X, Eye, EyeOff, User, Mail, Lock, Camera, AlertCircle, KeyRound, Check } from 'lucide-react';
-import { getRememberMePreference, setRememberMePreference, supabase, projectId } from '../lib/supabase';
+import { useEffect, useState, type FormEvent, type ReactNode } from 'react';
+import { Camera, Eye, EyeOff, KeyRound, LoaderCircle, MailCheck } from 'lucide-react';
+import Modal from './common/Modal';
+import { setRememberMePreference, supabase } from '../lib/supabase';
+import { resolveSessionUser, type SessionUser } from '../lib/session';
+import { errorMessage } from '../lib/api';
+import { STUDIO } from '../content/site';
+
+export type AuthView = 'signin' | 'signup' | 'forgot';
 
 interface AuthProps {
   isOpen: boolean;
+  defaultView?: AuthView;
   onClose: () => void;
-  onSuccess: (user: any) => void;
-  defaultView?: 'signin' | 'signup' | 'reset';
+  onSuccess: (user: SessionUser) => void;
 }
 
-export default function Auth({ isOpen, onClose, onSuccess, defaultView }: AuthProps) {
-  const [isLogin, setIsLogin] = useState(defaultView !== 'signup');
-  const [isForgotPassword, setIsForgotPassword] = useState(defaultView === 'reset');
-  const [forgotPasswordStep, setForgotPasswordStep] = useState<'email' | 'verify' | 'reset' | 'success'>('email');
-  const [resetCode, setResetCode] = useState('');
-  const [generatedCode, setGeneratedCode] = useState('');
-  const [resetEmail, setResetEmail] = useState('');
-  const [showPassword, setShowPassword] = useState(false);
-  const [showConfirmPassword, setShowConfirmPassword] = useState(false);
-  const [showConfirmDialog, setShowConfirmDialog] = useState(false);
-  const [showSignupSuccessDialog, setShowSignupSuccessDialog] = useState(false);
-  const [signupSuccessEmail, setSignupSuccessEmail] = useState('');
-  const [rememberMe, setRememberMe] = useState(getRememberMePreference());
-  const [privacyConsent, setPrivacyConsent] = useState(false);
-  const [termsConsent, setTermsConsent] = useState(false);
-  const [showPrivacyNotice, setShowPrivacyNotice] = useState(false);
-  const [showTermsNotice, setShowTermsNotice] = useState(false);
+type Stage = AuthView | 'forgot-sent' | 'signup-done';
+
+const EMPTY = { firstName: '', lastName: '', username: '', email: '', phone: '', password: '', confirmPassword: '' };
+
+const friendlyAuthError = (message: string) => {
+  const lower = message.toLowerCase();
+  if (lower.includes('invalid login')) return 'That email and password do not match. Check for typos or reset your password.';
+  if (lower.includes('email not confirmed')) return 'Please confirm your email first. Check your inbox (and spam folder) for the link we sent.';
+  if (lower.includes('already registered') || lower.includes('already exists')) return 'An account with this email already exists. Try signing in instead.';
+  if (lower.includes('failed to fetch') || lower.includes('network')) return 'We could not reach the server. Check your connection and try again.';
+  return message;
+};
+
+function PasswordField({ id, label, value, onChange, autoComplete, error, hint }: { id: string; label: string; value: string; onChange: (value: string) => void; autoComplete: string; error?: string; hint?: ReactNode }) {
+  const [visible, setVisible] = useState(false);
+  return (
+    <div className="field">
+      <label htmlFor={id}>{label}</label>
+      <div className="input-affix">
+        <input id={id} type={visible ? 'text' : 'password'} value={value} onChange={(event) => onChange(event.target.value)} autoComplete={autoComplete} aria-invalid={Boolean(error)} />
+        <button type="button" className="affix-btn" onClick={() => setVisible((current) => !current)} aria-label={visible ? 'Hide password' : 'Show password'}>
+          {visible ? <EyeOff size={18} /> : <Eye size={18} />}
+        </button>
+      </div>
+      {hint && !error && <p className="field-hint">{hint}</p>}
+      {error && <p className="field-error">{error}</p>}
+    </div>
+  );
+}
+
+export default function Auth({ isOpen, defaultView = 'signin', onClose, onSuccess }: AuthProps) {
+  const [stage, setStage] = useState<Stage>(defaultView);
+  const [form, setForm] = useState(EMPTY);
+  const [errors, setErrors] = useState<Record<string, string>>({});
   const [loading, setLoading] = useState(false);
-  const [formData, setFormData] = useState({
-    firstName: '',
-    lastName: '',
-    username: '',
-    email: '',
-    password: '',
-    confirmPassword: ''
-  });
-  const [resetFormData, setResetFormData] = useState({
-    newPassword: '',
-    confirmNewPassword: ''
-  });
-  const [errors, setErrors] = useState<any>({});
-
-  const buildUserSession = (userProfile: any) => ({
-    id: userProfile.id,
-    firstName: userProfile.full_name?.split(' ')[0] || '',
-    lastName: userProfile.full_name?.split(' ').slice(1).join(' ') || '',
-    username: userProfile.username || '',
-    fullName: userProfile.full_name,
-    email: userProfile.email,
-    phone: userProfile.phone || '',
-    role: userProfile.role,
-    profilePicture: userProfile.profile_picture_url || '',
-    joinDate: userProfile.created_at
-  });
-
-  const fetchUserProfileWithRetry = async (userId: string, retries = 5, delayMs = 400) => {
-    for (let attempt = 0; attempt < retries; attempt += 1) {
-      const { data: userProfile, error: profileError } = await supabase
-        .from('users')
-        .select('*')
-        .eq('id', userId)
-        .maybeSingle();
-
-      if (!profileError && userProfile) {
-        return userProfile;
-      }
-
-      if (attempt < retries - 1) {
-        await new Promise((resolve) => setTimeout(resolve, delayMs * (attempt + 1)));
-      }
-    }
-
-    return null;
-  };
+  const [remember, setRemember] = useState(true);
+  const [agreed, setAgreed] = useState(false);
+  const [policy, setPolicy] = useState<'terms' | 'privacy' | null>(null);
 
   useEffect(() => {
     if (!isOpen) return;
-
-    const openReset = defaultView === 'reset';
-    setIsLogin(defaultView !== 'signup');
-    setIsForgotPassword(openReset);
-    setForgotPasswordStep('email');
+    setStage(defaultView);
     setErrors({});
     setLoading(false);
-    setShowPassword(false);
-    setShowConfirmPassword(false);
-    setShowConfirmDialog(false);
-    setShowSignupSuccessDialog(false);
-    setShowPrivacyNotice(false);
-    setShowTermsNotice(false);
-    setSignupSuccessEmail('');
-    setPrivacyConsent(false);
-    setTermsConsent(false);
-    setFormData({
-      firstName: '',
-      lastName: '',
-      username: '',
-      email: '',
-      password: '',
-      confirmPassword: ''
-    });
-    setResetEmail('');
-    setResetCode('');
-    setGeneratedCode('');
-    setResetFormData({ newPassword: '', confirmNewPassword: '' });
+    setAgreed(false);
+    setForm((current) => ({ ...EMPTY, email: current.email }));
+  }, [isOpen, defaultView]);
 
-    if (openReset) {
-      setResetEmail('');
-      setResetCode('');
-      setGeneratedCode('');
-      setResetFormData({ newPassword: '', confirmNewPassword: '' });
-    }
-  }, [defaultView, isOpen]);
-
-  const validateForm = () => {
-    const newErrors: any = {};
-
-    if (!isLogin && !formData.firstName.trim()) {
-      newErrors.firstName = 'First name is required';
-    }
-
-    if (!isLogin && !formData.lastName.trim()) {
-      newErrors.lastName = 'Last name is required';
-    }
-
-    if (!isLogin && !formData.username.trim()) {
-      newErrors.username = 'Username is required';
-    } else if (!isLogin && formData.username.length < 3) {
-      newErrors.username = 'Username must be at least 3 characters';
-    }
-
-    if (!formData.email.trim()) {
-      newErrors.email = 'Email is required';
-    } else if (!/\S+@\S+\.\S+/.test(formData.email)) {
-      newErrors.email = 'Email is invalid';
-    }
-
-    if (!formData.password) {
-      newErrors.password = 'Password is required';
-    } else if (formData.password.length < 6) {
-      newErrors.password = 'Password must be at least 6 characters';
-    }
-
-    if (!isLogin && formData.password !== formData.confirmPassword) {
-      newErrors.confirmPassword = 'Passwords do not match';
-    }
-
-    if (!isLogin && !privacyConsent) {
-      newErrors.privacyConsent = 'You must agree to the Data Privacy Notice before creating an account';
-    }
-
-    if (!isLogin && !termsConsent) {
-      newErrors.termsConsent = 'You must agree to the Terms and Conditions before creating an account';
-    }
-
-    setErrors(newErrors);
-    return Object.keys(newErrors).length === 0;
+  const set = (key: keyof typeof EMPTY) => (value: string) => {
+    setForm((current) => ({ ...current, [key]: value }));
+    setErrors((current) => ({ ...current, [key]: '', general: '' }));
   };
 
-  const handleConfirmCreate = () => {
-    setShowConfirmDialog(false);
-    proceedWithSignup();
-  };
+  const emailValid = /^\S+@\S+\.\S+$/.test(form.email.trim());
 
-  const proceedWithSignup = async () => {
+  const signIn = async (event: FormEvent) => {
+    event.preventDefault();
+    const next: Record<string, string> = {};
+    if (!emailValid) next.email = 'Enter a valid email address.';
+    if (!form.password) next.password = 'Enter your password.';
+    setErrors(next);
+    if (Object.keys(next).length || loading) return;
+
     setLoading(true);
-    setErrors({});
+    try {
+      setRememberMePreference(remember);
+      const { data, error } = await supabase.auth.signInWithPassword({ email: form.email.trim(), password: form.password });
+      if (error) throw error;
+      if (data.user) onSuccess(await resolveSessionUser(data.user));
+      onClose();
+    } catch (error) {
+      setErrors({ general: friendlyAuthError(errorMessage(error)) });
+    } finally {
+      setLoading(false);
+    }
+  };
 
+  const signUp = async (event: FormEvent) => {
+    event.preventDefault();
+    const next: Record<string, string> = {};
+    if (!form.firstName.trim()) next.firstName = 'Required.';
+    if (!form.lastName.trim()) next.lastName = 'Required.';
+    if (form.username.trim().length < 3) next.username = 'At least 3 characters.';
+    else if (!/^[a-z0-9._-]+$/i.test(form.username.trim())) next.username = 'Letters, numbers, dots, dashes or underscores only.';
+    if (!emailValid) next.email = 'Enter a valid email address.';
+    if (form.phone && form.phone.replace(/\D/g, '').length < 10) next.phone = 'Enter a full mobile number or leave it blank.';
+    if (form.password.length < 8) next.password = 'Use at least 8 characters.';
+    if (form.password !== form.confirmPassword) next.confirmPassword = 'Passwords do not match.';
+    if (!agreed) next.agreed = 'Please agree to the Terms and Data Privacy Notice.';
+    setErrors(next);
+    if (Object.keys(next).length || loading) return;
+
+    setLoading(true);
     try {
       setRememberMePreference(true);
-      console.log('Attempting signup with Supabase confirmation flow...');
-
-      const { error } = await supabase.auth.signUp({
-        email: formData.email,
-        password: formData.password,
+      const { data, error } = await supabase.auth.signUp({
+        email: form.email.trim(),
+        password: form.password,
         options: {
+          emailRedirectTo: window.location.origin,
           data: {
-            full_name: `${formData.firstName} ${formData.lastName}`,
-            username: formData.username,
-            role: 'customer'
-          }
-        }
+            full_name: `${form.firstName.trim()} ${form.lastName.trim()}`,
+            username: form.username.trim(),
+            phone: form.phone.trim() || undefined,
+          },
+        },
       });
-
-      if (error) {
-        console.error('Signup error:', error);
-        setErrors({ general: error.message || 'Unable to create account right now.' });
-        setLoading(false);
+      if (error) throw error;
+      if (data.session && data.user) {
+        onSuccess(await resolveSessionUser(data.user));
+        onClose();
         return;
       }
-
-      setSignupSuccessEmail(formData.email);
-      setShowSignupSuccessDialog(true);
-      setShowConfirmDialog(false);
-      setPrivacyConsent(false);
-      setTermsConsent(false);
-      setFormData({ firstName: '', lastName: '', username: '', email: '', password: '', confirmPassword: '' });
-      setIsLogin(true);
-      setShowPassword(false);
-      setShowConfirmPassword(false);
-    } catch (error: any) {
-      console.error('Signup process error:', error);
-      setErrors({ general: error.message || 'An error occurred during signup' });
+      setStage('signup-done');
+    } catch (error) {
+      setErrors({ general: friendlyAuthError(errorMessage(error)) });
     } finally {
       setLoading(false);
     }
   };
 
-  const handleSubmit = async (e: React.FormEvent) => {
-    e.preventDefault();
-
-    if (!validateForm()) return;
-
-    if (isLogin) {
-      setLoading(true);
-      setErrors({});
-
-      try {
-        console.log('Attempting login with Supabase...');
-        
-        setRememberMePreference(rememberMe);
-
-        const { data, error } = await supabase.auth.signInWithPassword({
-          email: formData.email,
-          password: formData.password,
-        });
-
-        if (error) {
-          console.error('Login error:', error);
-          setErrors({ general: error.message });
-          setLoading(false);
-          return;
-        }
-
-        const activeSession = data.session
-          ? (await supabase.auth.setSession({
-              access_token: data.session.access_token,
-              refresh_token: data.session.refresh_token,
-            })).data.session ?? data.session
-          : (await supabase.auth.getSession()).data.session;
-
-        const authUser = activeSession?.user ?? data.user ?? (await supabase.auth.getUser()).data.user;
-
-        if (!authUser) {
-          setErrors({ general: 'Login succeeded but the active session could not be restored. Please try again.' });
-          setLoading(false);
-          return;
-        }
-
-        console.log('Login successful, fetching profile...');
-
-        const userProfile = await fetchUserProfileWithRetry(authUser.id);
-
-        if (!userProfile) {
-          console.error('Profile fetch error: no profile found after retry. Deferring to app auth listener.');
-          onClose();
-          return;
-        }
-
-        onSuccess(buildUserSession(userProfile));
-        onClose();
-      } catch (error: any) {
-        console.error('Login process error:', error);
-        setErrors({ general: error.message || 'An error occurred during login' });
-      } finally {
-        setLoading(false);
-      }
-    } else {
-      setShowConfirmDialog(true);
+  const sendReset = async (event: FormEvent) => {
+    event.preventDefault();
+    if (!emailValid) {
+      setErrors({ email: 'Enter the email you signed up with.' });
+      return;
     }
-  };
-
-  const handleChange = (e: React.ChangeEvent<HTMLInputElement>) => {
-    setFormData(prev => ({
-      ...prev,
-      [e.target.name]: e.target.value
-    }));
-    if (errors[e.target.name]) {
-      setErrors((prev: any) => ({ ...prev, [e.target.name]: '' }));
-    }
-  };
-
-  const handleResetChange = (e: React.ChangeEvent<HTMLInputElement>) => {
-    setResetFormData(prev => ({
-      ...prev,
-      [e.target.name]: e.target.value
-    }));
-    if (errors[e.target.name]) {
-      setErrors((prev: any) => ({ ...prev, [e.target.name]: '' }));
-    }
-  };
-
-  const handleForgotPasswordClick = () => {
-    setIsForgotPassword(true);
-    setForgotPasswordStep('email');
-    setResetEmail('');
-    setResetCode('');
-    setGeneratedCode('');
-    setResetFormData({ newPassword: '', confirmNewPassword: '' });
-    setErrors({});
-  };
-
-  const handleSendCode = async (e: React.FormEvent) => {
-    e.preventDefault();
+    if (loading) return;
     setLoading(true);
-    setErrors({});
-
-    if (!resetEmail.trim()) {
-      setErrors({ general: 'Email is required' });
-      setLoading(false);
-      return;
-    }
-
-    if (!/\S+@\S+\.\S+/.test(resetEmail)) {
-      setErrors({ general: 'Email is invalid' });
-      setLoading(false);
-      return;
-    }
-
     try {
-      const { error } = await supabase.auth.resetPasswordForEmail(resetEmail, {
-        redirectTo: `${window.location.origin}/reset-password`,
-      });
-
-      if (error) {
-        setErrors({ general: error.message || 'Failed to send reset email' });
-      } else {
-        setForgotPasswordStep('success');
-        setErrors({ success: 'Password reset instructions have been sent to your email!' });
-      }
-    } catch (error: any) {
-      console.error('Password reset error:', error);
-      setErrors({ general: 'An error occurred. Please try again.' });
+      const { error } = await supabase.auth.resetPasswordForEmail(form.email.trim(), { redirectTo: `${window.location.origin}/reset-password` });
+      if (error) throw error;
+      setStage('forgot-sent');
+    } catch (error) {
+      setErrors({ general: friendlyAuthError(errorMessage(error)) });
     } finally {
       setLoading(false);
     }
   };
 
-  const handleVerifyCode = (e: React.FormEvent) => {
-    e.preventDefault();
-    setErrors({});
-
-    if (!resetCode.trim()) {
-      setErrors({ general: 'Verification code is required' });
-      return;
-    }
-
-    if (resetCode === generatedCode) {
-      setForgotPasswordStep('reset');
-      setErrors({});
-    } else {
-      setErrors({ general: 'Invalid verification code. Please try again.' });
-    }
+  const titles: Record<Stage, { title: string; description: string; icon: ReactNode }> = {
+    signin: { title: 'Welcome back', description: 'Sign in to book, track your bookings and see your photos.', icon: <Camera size={22} /> },
+    signup: { title: 'Create your account', description: `It is free and keeps your bookings, receipts and photo links in one place.`, icon: <Camera size={22} /> },
+    forgot: { title: 'Reset your password', description: 'Enter your email and we will send you a secure link to set a new password.', icon: <KeyRound size={22} /> },
+    'forgot-sent': { title: 'Check your email', description: `If an account exists for ${form.email}, a reset link is on its way. It may take a minute; check spam too.`, icon: <MailCheck size={22} /> },
+    'signup-done': { title: 'Confirm your email', description: `We sent a confirmation link to ${form.email}. Click it, then sign in to continue your booking.`, icon: <MailCheck size={22} /> },
   };
-
-  const handleResetPassword = (e: React.FormEvent) => {
-    e.preventDefault();
-
-    const newErrors: any = {};
-
-    if (!resetFormData.newPassword) {
-      newErrors.newPassword = 'New password is required';
-    } else if (resetFormData.newPassword.length < 6) {
-      newErrors.newPassword = 'Password must be at least 6 characters';
-    }
-
-    if (resetFormData.newPassword !== resetFormData.confirmNewPassword) {
-      newErrors.confirmNewPassword = 'Passwords do not match';
-    }
-
-    setErrors(newErrors);
-
-    if (Object.keys(newErrors).length === 0) {
-      const { data, error } = supabase.auth.updateUser({
-        password: resetFormData.newPassword
-      });
-
-      if (error) {
-        setErrors({ general: error.message });
-      } else {
-        setForgotPasswordStep('success');
-      }
-    }
-  };
-
-  const handleBackToLogin = () => {
-    setIsForgotPassword(false);
-    setIsLogin(true);
-    setForgotPasswordStep('email');
-    setResetEmail('');
-    setResetCode('');
-    setGeneratedCode('');
-    setResetFormData({ newPassword: '', confirmNewPassword: '' });
-    setErrors({});
-  };
-
-  if (!isOpen) return null;
-
-  if (isForgotPassword) {
-    return (
-      <div className="auth-overlay" onClick={() => {
-        setIsForgotPassword(false);
-    setIsLogin(true);
-        setForgotPasswordStep('email');
-      }}>
-        <div className="auth-modal" onClick={(e) => e.stopPropagation()}>
-          <button className="auth-close" onClick={() => {
-            setIsForgotPassword(false);
-    setIsLogin(true);
-            setForgotPasswordStep('email');
-          }}>
-            <X size={24} />
-          </button>
-
-          <div className="auth-header">
-            <div className="auth-icon">
-              {forgotPasswordStep === 'success' ? <Check size={32} /> : <KeyRound size={32} />}
-            </div>
-            <h2>
-              {forgotPasswordStep === 'email' && 'Forgot Password'}
-              {forgotPasswordStep === 'verify' && 'Verify Code'}
-              {forgotPasswordStep === 'reset' && 'Reset Password'}
-              {forgotPasswordStep === 'success' && 'Check Your Email'}
-            </h2>
-            <p>
-              {forgotPasswordStep === 'email' && 'Enter your email to receive a verification code'}
-              {forgotPasswordStep === 'verify' && 'Enter the 6-digit code sent to your email'}
-              {forgotPasswordStep === 'reset' && 'Create a new password for your account'}
-              {forgotPasswordStep === 'success' && 'Use the link in your email to open the secure password reset page'}
-            </p>
-          </div>
-
-          
-          {forgotPasswordStep === 'email' && (
-            <>
-              <form onSubmit={handleSendCode} className="auth-form">
-                {errors.general && (
-                  <div className="auth-error-banner">
-                    {errors.general}
-                  </div>
-                )}
-                {errors.success && (
-                  <div className="auth-success-banner">
-                    {errors.success}
-                  </div>
-                )}
-
-                <div className="form-group">
-                  <label htmlFor="resetEmail">
-                    <Mail size={18} />
-                    Email Address
-                  </label>
-                  <input
-                    type="email"
-                    id="resetEmail"
-                    name="resetEmail"
-                    value={resetEmail}
-                    onChange={(e) => setResetEmail(e.target.value)}
-                    placeholder="Enter your email"
-                    autoFocus
-                  />
-                </div>
-
-                <button type="submit" className="auth-submit-btn">
-                  Send Verification Code
-                </button>
-              </form>
-
-              <div className="auth-switch">
-                <p>
-                  Remember your password?{' '}
-                  <button onClick={handleBackToLogin}>
-                    Sign In
-                  </button>
-                </p>
-              </div>
-            </>
-          )}
-
-          
-          {forgotPasswordStep === 'verify' && (
-            <>
-              <form onSubmit={handleVerifyCode} className="auth-form">
-                {errors.general && (
-                  <div className="auth-error-banner">
-                    {errors.general}
-                  </div>
-                )}
-                {errors.success && (
-                  <div className="auth-success-banner">
-                    {errors.success}
-                  </div>
-                )}
-
-                <div className="form-group">
-                  <label htmlFor="resetCode">
-                    <KeyRound size={18} />
-                    Verification Code
-                  </label>
-                  <input
-                    type="text"
-                    id="resetCode"
-                    name="resetCode"
-                    value={resetCode}
-                    onChange={(e) => setResetCode(e.target.value)}
-                    placeholder="Enter 6-digit code"
-                    maxLength={6}
-                    autoFocus
-                  />
-                  <span className="form-hint">Check your email for the verification code</span>
-                </div>
-
-                <button type="submit" className="auth-submit-btn">
-                  Verify Code
-                </button>
-              </form>
-
-              <div className="auth-switch">
-                <p>
-                  Didn't receive code?{' '}
-                  <button onClick={() => {
-                    setForgotPasswordStep('email');
-                    setResetCode('');
-                    setGeneratedCode('');
-                  }}>
-                    Resend
-                  </button>
-                </p>
-              </div>
-            </>
-          )}
-
-          
-          {forgotPasswordStep === 'reset' && (
-            <>
-              <form onSubmit={handleResetPassword} className="auth-form">
-                {errors.general && (
-                  <div className="auth-error-banner">
-                    {errors.general}
-                  </div>
-                )}
-
-                <div className="form-group">
-                  <label htmlFor="newPassword">
-                    <Lock size={18} />
-                    New Password
-                  </label>
-                  <div className="password-input">
-                    <input
-                      type={showPassword ? 'text' : 'password'}
-                      id="newPassword"
-                      name="newPassword"
-                      value={resetFormData.newPassword}
-                      onChange={handleResetChange}
-                      placeholder="Enter new password"
-                      className={errors.newPassword ? 'error' : ''}
-                      autoFocus
-                    />
-                    <button
-                      type="button"
-                      className="password-toggle"
-                      onClick={() => setShowPassword(!showPassword)}
-                    >
-                      {showPassword ? <EyeOff size={18} /> : <Eye size={18} />}
-                    </button>
-                  </div>
-                  {errors.newPassword && <span className="error-text">{errors.newPassword}</span>}
-                </div>
-
-                <div className="form-group">
-                  <label htmlFor="confirmNewPassword">
-                    <Lock size={18} />
-                    Confirm New Password
-                  </label>
-                  <div className="password-input">
-                    <input
-                      type={showConfirmPassword ? 'text' : 'password'}
-                      id="confirmNewPassword"
-                      name="confirmNewPassword"
-                      value={resetFormData.confirmNewPassword}
-                      onChange={handleResetChange}
-                      placeholder="Confirm new password"
-                      className={errors.confirmNewPassword ? 'error' : ''}
-                    />
-                    <button
-                      type="button"
-                      className="password-toggle"
-                      onClick={() => setShowConfirmPassword(!showConfirmPassword)}
-                    >
-                      {showConfirmPassword ? <EyeOff size={18} /> : <Eye size={18} />}
-                    </button>
-                  </div>
-                  {errors.confirmNewPassword && <span className="error-text">{errors.confirmNewPassword}</span>}
-                </div>
-
-                <button type="submit" className="auth-submit-btn">
-                  Reset Password
-                </button>
-              </form>
-            </>
-          )}
-
-          
-          {forgotPasswordStep === 'success' && (
-            <>
-              <div className="success-message">
-                <div className="success-icon">
-                  <Check size={48} />
-                </div>
-                <p>Your password has been successfully reset. You can now sign in with your new password.</p>
-              </div>
-
-              <button 
-                className="auth-submit-btn"
-                onClick={handleBackToLogin}
-              >
-                Go to Sign In
-              </button>
-            </>
-          )}
-        </div>
-      </div>
-    );
-  }
+  const heading = titles[stage];
+  const submitLabel = (label: string) => (
+    <>
+      {loading && <LoaderCircle size={18} className="spin" />}
+      {loading ? 'Please wait…' : label}
+    </>
+  );
 
   return (
     <>
-      <div className="auth-overlay" onClick={onClose}>
-        <div className="auth-modal" onClick={(e) => e.stopPropagation()}>
-          <button className="auth-close" onClick={onClose}>
-            <X size={24} />
-          </button>
-
-          <div className="auth-header">
-            <div className="auth-icon">
-              <Camera size={32} />
-            </div>
-            <h2>{isLogin ? 'Welcome Back' : 'Create Account'}</h2>
-            <p>{isLogin ? 'Sign in to access your bookings and profile' : 'Join Tutok Pitik Studios today'}</p>
+      <Modal open={isOpen} onClose={onClose} size="sm" className="auth-modal" icon={heading.icon} title={heading.title} description={heading.description} dismissible={!loading}>
+        {(stage === 'signin' || stage === 'signup') && (
+          <div className="auth-tabs" role="tablist" aria-label="Account">
+            <button type="button" role="tab" aria-selected={stage === 'signin'} className={stage === 'signin' ? 'is-active' : ''} onClick={() => { setStage('signin'); setErrors({}); }}>
+              Sign in
+            </button>
+            <button type="button" role="tab" aria-selected={stage === 'signup'} className={stage === 'signup' ? 'is-active' : ''} onClick={() => { setStage('signup'); setErrors({}); }}>
+              Create account
+            </button>
           </div>
+        )}
 
-          <form onSubmit={handleSubmit} className="auth-form">
-            {errors.general && (
-              <div className="auth-error-banner">
-                {errors.general}
-              </div>
-            )}
+        {errors.general && <div className="notice notice-danger" role="alert"><p>{errors.general}</p></div>}
 
-            {!isLogin && (
-              <div className="form-grid-two">
-                <div className="form-group">
-                  <label htmlFor="firstName">
-                    <User size={18} />
-                    First Name
-                  </label>
-                  <input
-                    type="text"
-                    id="firstName"
-                    name="firstName"
-                    value={formData.firstName}
-                    onChange={handleChange}
-                    placeholder="Enter first name"
-                    className={errors.firstName ? 'error' : ''}
-                  />
-                  {errors.firstName && <span className="error-text">{errors.firstName}</span>}
-                </div>
-                <div className="form-group">
-                  <label htmlFor="lastName">
-                    <User size={18} />
-                    Last Name
-                  </label>
-                  <input
-                    type="text"
-                    id="lastName"
-                    name="lastName"
-                    value={formData.lastName}
-                    onChange={handleChange}
-                    placeholder="Enter last name"
-                    className={errors.lastName ? 'error' : ''}
-                  />
-                  {errors.lastName && <span className="error-text">{errors.lastName}</span>}
-                </div>
-              </div>
-            )}
-
-            {!isLogin && (
-              <div className="form-group">
-                <label htmlFor="username">
-                  <User size={18} />
-                  Username
-                </label>
-                <input
-                  type="text"
-                  id="username"
-                  name="username"
-                  value={formData.username}
-                  onChange={handleChange}
-                  placeholder="Choose a username"
-                  className={errors.username ? 'error' : ''}
-                />
-                {errors.username && <span className="error-text">{errors.username}</span>}
-              </div>
-            )}
-
-            <div className="form-group">
-              <label htmlFor="email">
-                <Mail size={18} />
-                Email Address
-              </label>
-              <input
-                type="email"
-                id="email"
-                name="email"
-                value={formData.email}
-                onChange={handleChange}
-                placeholder="Enter your email"
-                className={errors.email ? 'error' : ''}
-              />
-              {errors.email && <span className="error-text">{errors.email}</span>}
+        {stage === 'signin' && (
+          <form className="auth-form" onSubmit={signIn} noValidate>
+            <div className="field">
+              <label htmlFor="auth-email">Email</label>
+              <input id="auth-email" type="email" autoComplete="email" inputMode="email" value={form.email} onChange={(event) => set('email')(event.target.value)} aria-invalid={Boolean(errors.email)} data-autofocus />
+              {errors.email && <p className="field-error">{errors.email}</p>}
             </div>
-
-            <div className="form-group">
-              <label htmlFor="password">
-                <Lock size={18} />
-                Password
+            <PasswordField id="auth-password" label="Password" value={form.password} onChange={set('password')} autoComplete="current-password" error={errors.password} />
+            <div className="auth-row">
+              <label className="checkbox">
+                <input type="checkbox" checked={remember} onChange={(event) => setRemember(event.target.checked)} />
+                <span>Keep me signed in</span>
               </label>
-              <div className="password-input">
-                <input
-                  type={showPassword ? 'text' : 'password'}
-                  id="password"
-                  name="password"
-                  value={formData.password}
-                  onChange={handleChange}
-                  placeholder="Enter your password"
-                  className={errors.password ? 'error' : ''}
-                />
-                <button
-                  type="button"
-                  className="password-toggle"
-                  onClick={() => setShowPassword(!showPassword)}
-                >
-                  {showPassword ? <EyeOff size={18} /> : <Eye size={18} />}
-                </button>
-              </div>
-              {errors.password && <span className="error-text">{errors.password}</span>}
+              <button type="button" className="btn-link" onClick={() => { setStage('forgot'); setErrors({}); }}>
+                Forgot password?
+              </button>
             </div>
-
-            
-            {isLogin && (
-              <label className="remember-me">
-                <input
-                  type="checkbox"
-                  checked={rememberMe}
-                  onChange={(e) => setRememberMe(e.target.checked)}
-                />
-                <span>Remember me</span>
-              </label>
-            )}
-
-            {isLogin && (
-              <div className="forgot-password-link">
-                <button 
-                  type="button" 
-                  onClick={handleForgotPasswordClick}
-                  className="text-link"
-                >
-                  Forgot Password?
-                </button>
-              </div>
-            )}
-
-            {!isLogin && (
-              <div className="form-group">
-                <label htmlFor="confirmPassword">
-                  <Lock size={18} />
-                  Confirm Password
-                </label>
-                <div className="password-input">
-                  <input
-                    type={showConfirmPassword ? 'text' : 'password'}
-                    id="confirmPassword"
-                    name="confirmPassword"
-                    value={formData.confirmPassword}
-                    onChange={handleChange}
-                    placeholder="Confirm your password"
-                    className={errors.confirmPassword ? 'error' : ''}
-                  />
-                  <button
-                    type="button"
-                    className="password-toggle"
-                    onClick={() => setShowConfirmPassword(!showConfirmPassword)}
-                  >
-                    {showConfirmPassword ? <EyeOff size={18} /> : <Eye size={18} />}
-                  </button>
-                </div>
-                {errors.confirmPassword && <span className="error-text">{errors.confirmPassword}</span>}
-              </div>
-            )}
-
-            {!isLogin && (
-              <>
-                <div className="privacy-consent-block">
-                  <label className="privacy-consent-check">
-                    <input
-                      type="checkbox"
-                      checked={termsConsent}
-                      onChange={(e) => {
-                        setTermsConsent(e.target.checked);
-                        if (errors.termsConsent) {
-                          setErrors((prev: any) => ({ ...prev, termsConsent: '' }));
-                        }
-                      }}
-                    />
-                    <span>
-                      I agree to the <button type="button" className="inline-consent-link" onClick={() => setShowTermsNotice(true)}>Terms and Conditions</button> of Tutok Pitik Studios before creating my account.
-                    </span>
-                  </label>
-                  <p className="privacy-consent-note">
-                    Please read the terms carefully before proceeding with account registration.
-                  </p>
-                  {errors.termsConsent && <span className="error-text">{errors.termsConsent}</span>}
-                </div>
-
-                <div className="privacy-consent-block">
-                  <label className="privacy-consent-check">
-                    <input
-                      type="checkbox"
-                      checked={privacyConsent}
-                      onChange={(e) => {
-                        setPrivacyConsent(e.target.checked);
-                        if (errors.privacyConsent) {
-                          setErrors((prev: any) => ({ ...prev, privacyConsent: '' }));
-                        }
-                      }}
-                    />
-                    <span>
-                      I agree to the <button type="button" className="inline-consent-link" onClick={() => setShowPrivacyNotice(true)}>Data Privacy Notice</button> and allow Tutok Pitik Studios to collect, store, and use my personal information only for account creation, booking management, customer support, and photography service updates.
-                    </span>
-                  </label>
-                  <p className="privacy-consent-note">
-                    Your personal information will be handled confidentially and used only for legitimate service-related purposes.
-                  </p>
-                  {errors.privacyConsent && <span className="error-text">{errors.privacyConsent}</span>}
-                </div>
-              </>
-            )}
-
-            <button type="submit" className="auth-submit-btn">
-              {isLogin ? 'Sign In' : 'Create Account'}
+            <button type="submit" className="btn btn-primary btn-block" disabled={loading}>
+              {submitLabel('Sign in')}
             </button>
           </form>
+        )}
 
-          <div className="auth-switch">
-            <p>
-              {isLogin ? "Don't have an account? " : 'Already have an account? '}
-              <button onClick={() => {
-                setIsLogin(!isLogin);
-                setFormData({ firstName: '', lastName: '', username: '', email: '', password: '', confirmPassword: '' });
-                setErrors({});
-                setPrivacyConsent(false);
-                setTermsConsent(false);
-                setShowPassword(false);
-                setShowConfirmPassword(false);
-              }}>
-                {isLogin ? 'Sign Up' : 'Sign In'}
-              </button>
-            </p>
-          </div>
-        </div>
-      </div>
+        {stage === 'signup' && (
+          <form className="auth-form" onSubmit={signUp} noValidate>
+            <div className="field-row">
+              <div className="field">
+                <label htmlFor="auth-first">First name</label>
+                <input id="auth-first" autoComplete="given-name" value={form.firstName} onChange={(event) => set('firstName')(event.target.value)} aria-invalid={Boolean(errors.firstName)} data-autofocus />
+                {errors.firstName && <p className="field-error">{errors.firstName}</p>}
+              </div>
+              <div className="field">
+                <label htmlFor="auth-last">Last name</label>
+                <input id="auth-last" autoComplete="family-name" value={form.lastName} onChange={(event) => set('lastName')(event.target.value)} aria-invalid={Boolean(errors.lastName)} />
+                {errors.lastName && <p className="field-error">{errors.lastName}</p>}
+              </div>
+            </div>
+            <div className="field">
+              <label htmlFor="auth-username">Username</label>
+              <input id="auth-username" autoComplete="username" value={form.username} onChange={(event) => set('username')(event.target.value)} aria-invalid={Boolean(errors.username)} />
+              {errors.username && <p className="field-error">{errors.username}</p>}
+            </div>
+            <div className="field">
+              <label htmlFor="auth-signup-email">Email</label>
+              <input id="auth-signup-email" type="email" inputMode="email" autoComplete="email" value={form.email} onChange={(event) => set('email')(event.target.value)} aria-invalid={Boolean(errors.email)} />
+              {errors.email && <p className="field-error">{errors.email}</p>}
+            </div>
+            <div className="field">
+              <label htmlFor="auth-phone">
+                Mobile number <span className="optional">(optional, needed to book)</span>
+              </label>
+              <input id="auth-phone" type="tel" inputMode="tel" autoComplete="tel" placeholder="0917 123 4567" value={form.phone} onChange={(event) => set('phone')(event.target.value)} aria-invalid={Boolean(errors.phone)} />
+              {errors.phone && <p className="field-error">{errors.phone}</p>}
+            </div>
+            <PasswordField id="auth-new-password" label="Password" value={form.password} onChange={set('password')} autoComplete="new-password" error={errors.password} hint="At least 8 characters." />
+            <PasswordField id="auth-confirm-password" label="Confirm password" value={form.confirmPassword} onChange={set('confirmPassword')} autoComplete="new-password" error={errors.confirmPassword} />
+            <label className="checkbox checkbox-block">
+              <input type="checkbox" checked={agreed} onChange={(event) => { setAgreed(event.target.checked); setErrors((current) => ({ ...current, agreed: '' })); }} />
+              <span>
+                I agree to the{' '}
+                <button type="button" className="btn-link" onClick={() => setPolicy('terms')}>Terms and Conditions</button> and the{' '}
+                <button type="button" className="btn-link" onClick={() => setPolicy('privacy')}>Data Privacy Notice</button>.
+              </span>
+            </label>
+            {errors.agreed && <p className="field-error">{errors.agreed}</p>}
+            <button type="submit" className="btn btn-primary btn-block" disabled={loading}>
+              {submitLabel('Create account')}
+            </button>
+          </form>
+        )}
 
-      
-      {showConfirmDialog && (
-        <div className="modal-overlay active" onClick={() => setShowConfirmDialog(false)}>
-          <div className="confirm-dialog" onClick={(e) => e.stopPropagation()}>
-            <div className="confirm-icon">
-              <AlertCircle size={48} />
+        {stage === 'forgot' && (
+          <form className="auth-form" onSubmit={sendReset} noValidate>
+            <div className="field">
+              <label htmlFor="auth-reset-email">Email</label>
+              <input id="auth-reset-email" type="email" inputMode="email" autoComplete="email" value={form.email} onChange={(event) => set('email')(event.target.value)} aria-invalid={Boolean(errors.email)} data-autofocus />
+              {errors.email && <p className="field-error">{errors.email}</p>}
             </div>
-            <h3>Confirm Account Creation</h3>
-            <p>Are you sure you want to create an account with this information?</p>
-            <div className="confirm-details">
-              <p><strong>Name:</strong> {formData.firstName} {formData.lastName}</p>
-              <p><strong>Username:</strong> {formData.username}</p>
-              <p><strong>Email:</strong> {formData.email}</p>
-              <p><strong>Terms and Conditions:</strong> Confirmed</p>
-              <p><strong>Privacy Consent:</strong> Confirmed</p>
-            </div>
-            <div className="confirm-actions">
-              <button className="confirm-btn-cancel" onClick={() => setShowConfirmDialog(false)}>
-                Cancel
-              </button>
-              <button className="confirm-btn-proceed" onClick={handleConfirmCreate}>
-                Proceed
-              </button>
-            </div>
-          </div>
-        </div>
-      )}
+            <button type="submit" className="btn btn-primary btn-block" disabled={loading}>
+              {submitLabel('Send reset link')}
+            </button>
+            <button type="button" className="btn btn-ghost btn-block" onClick={() => { setStage('signin'); setErrors({}); }}>
+              Back to sign in
+            </button>
+          </form>
+        )}
 
-      {showTermsNotice && (
-        <div className="modal-overlay active" onClick={() => setShowTermsNotice(false)}>
-          <div className="confirm-dialog consent-read-dialog" onClick={(e) => e.stopPropagation()}>
-            <div className="confirm-icon">
-              <Check size={48} />
-            </div>
-            <h3>Terms and Conditions</h3>
-            <div className="confirm-details consent-read-content">
-              <p><strong>Account Use:</strong> Your account must be used only for legitimate Tutok Pitik Studios services such as bookings, inquiries, and profile management.</p>
-              <p><strong>Accurate Information:</strong> You agree to provide true, complete, and updated personal information during registration and booking.</p>
-              <p><strong>Booking Compliance:</strong> All bookings are subject to studio review, schedule availability, payment verification, and service policies.</p>
-              <p><strong>User Responsibility:</strong> You are responsible for keeping your account credentials secure and for activities made under your account.</p>
-              <p><strong>Service Changes:</strong> Tutok Pitik Studios may update pricing, transportation adjustments, and service requirements when necessary.</p>
-            </div>
-            <div className="confirm-actions">
-              <button className="confirm-btn-proceed" onClick={() => setShowTermsNotice(false)}>
-                Close
-              </button>
-            </div>
+        {(stage === 'forgot-sent' || stage === 'signup-done') && (
+          <div className="auth-form">
+            <button type="button" className="btn btn-primary btn-block" onClick={() => { setStage('signin'); setErrors({}); }} data-autofocus>
+              Go to sign in
+            </button>
           </div>
-        </div>
-      )}
+        )}
+      </Modal>
 
-      {showPrivacyNotice && (
-        <div className="modal-overlay active" onClick={() => setShowPrivacyNotice(false)}>
-          <div className="confirm-dialog consent-read-dialog" onClick={(e) => e.stopPropagation()}>
-            <div className="confirm-icon">
-              <Check size={48} />
-            </div>
-            <h3>Data Privacy Notice</h3>
-            <div className="confirm-details consent-read-content">
-              <p><strong>Collection:</strong> Tutok Pitik Studios collects your name, email, account details, booking information, and uploaded files only as needed to deliver studio services.</p>
-              <p><strong>Use:</strong> Your information is used for account creation, booking management, customer communication, payment review, and service updates.</p>
-              <p><strong>Protection:</strong> Reasonable steps are taken to keep your personal data secure and accessible only for legitimate system and business purposes.</p>
-              <p><strong>Limited Sharing:</strong> Your information will not be shared unnecessarily and will only be used in connection with the service features you requested.</p>
-              <p><strong>Your Consent:</strong> By creating an account, you acknowledge and agree to the processing of your information for these stated purposes.</p>
-            </div>
-            <div className="confirm-actions">
-              <button className="confirm-btn-proceed" onClick={() => setShowPrivacyNotice(false)}>
-                Close
-              </button>
-            </div>
+      <Modal
+        open={policy !== null}
+        onClose={() => setPolicy(null)}
+        size="md"
+        title={policy === 'terms' ? 'Terms and Conditions' : 'Data Privacy Notice'}
+        footer={<button type="button" className="btn btn-primary" onClick={() => setPolicy(null)}>Close</button>}
+      >
+        {policy === 'terms' ? (
+          <div className="policy-text">
+            <p><strong>Account use.</strong> Use your account only for legitimate {STUDIO.name} services such as bookings, inquiries and profile management.</p>
+            <p><strong>Accurate information.</strong> Provide true, complete and up-to-date details when you register and book.</p>
+            <p><strong>Bookings.</strong> Bookings are subject to studio review, schedule availability, payment verification and service policies.</p>
+            <p><strong>Your responsibility.</strong> Keep your login details secure. You are responsible for activity under your account.</p>
+            <p><strong>Changes.</strong> {STUDIO.name} may update pricing, transportation fees and service requirements when necessary.</p>
           </div>
-        </div>
-      )}
-
-      {showSignupSuccessDialog && (
-        <div className="modal-overlay active" onClick={() => setShowSignupSuccessDialog(false)}>
-          <div className="confirm-dialog" onClick={(e) => e.stopPropagation()}>
-            <div className="confirm-icon">
-              <Check size={48} />
-            </div>
-            <h3>Account Created</h3>
-            <p>Your account was created successfully. Please click the confirmation email we sent before signing in.</p>
-            <div className="confirm-details">
-              <p><strong>Email:</strong> {signupSuccessEmail}</p>
-              <p><strong>Next Step:</strong> Open your inbox and click the confirmation link to activate your account.</p>
-            </div>
-            <div className="confirm-actions">
-              <button
-                className="confirm-btn-proceed"
-                onClick={() => {
-                  setShowSignupSuccessDialog(false);
-                  setIsLogin(true);
-                }}
-              >
-                Got It
-              </button>
-            </div>
+        ) : (
+          <div className="policy-text">
+            <p><strong>What we collect.</strong> Your name, email, mobile number, account details, booking information and files you upload, only as needed to deliver our services.</p>
+            <p><strong>How we use it.</strong> Account creation, booking management, customer communication, payment review and service updates.</p>
+            <p><strong>Protection.</strong> We take reasonable steps to keep your data secure and accessible only for legitimate business purposes.</p>
+            <p><strong>Limited sharing.</strong> Your information is not shared unnecessarily and is only used for the services you requested.</p>
+            <p><strong>Consent.</strong> By creating an account, you agree to the processing of your information for these purposes.</p>
           </div>
-        </div>
-      )}
+        )}
+      </Modal>
     </>
   );
 }

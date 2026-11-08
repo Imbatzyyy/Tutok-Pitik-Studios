@@ -1,175 +1,105 @@
-import { useState, useEffect, useRef } from 'react';
-
-const blockedDates = [
-  '2025-01-20',
-  '2025-01-25',
-  '2025-02-19',
-  '2026-01-19',
-];
+import { useMemo, useState } from 'react';
+import { ChevronLeft, ChevronRight } from 'lucide-react';
+import { dayState, earliestBookableDate, latestBookableDate, type AvailabilityState, type DayState } from '../lib/availability';
+import { toDateKey } from '../lib/format';
 
 interface BookingCalendarProps {
-  selectedDate: string | null;
-  onDateSelect: (date: string) => void;
-  showCalendar: boolean;
-  onToggleCalendar: (show: boolean) => void;
+  value: string | null;
+  onChange: (date: string) => void;
+  availability: AvailabilityState;
   disabled?: boolean;
 }
 
-export default function BookingCalendar({ selectedDate, onDateSelect, showCalendar, onToggleCalendar, disabled = false }: BookingCalendarProps) {
-  const [currentMonth, setCurrentMonth] = useState(new Date().getMonth());
-  const [currentYear, setCurrentYear] = useState(new Date().getFullYear());
-  const calendarRef = useRef<HTMLDivElement>(null);
+const WEEKDAYS = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
+const STATE_LABEL: Record<DayState, string> = {
+  past: 'Not available',
+  'out-of-range': 'Not open for booking yet',
+  blocked: 'Unavailable',
+  full: 'Fully booked',
+  limited: 'Some times taken',
+  open: 'Open',
+};
 
-  const formatDateToString = (date: Date) => {
-    const d = new Date(date);
-    const year = d.getFullYear();
-    const month = String(d.getMonth() + 1).padStart(2, '0');
-    const day = String(d.getDate()).padStart(2, '0');
-    return `${year}-${month}-${day}`;
-  };
+export default function BookingCalendar({ value, onChange, availability, disabled }: BookingCalendarProps) {
+  const first = earliestBookableDate();
+  const last = latestBookableDate();
+  const initial = value ? new Date(`${value}T00:00:00`) : first;
+  const [view, setView] = useState({ year: initial.getFullYear(), month: initial.getMonth() });
 
-  const formatDateDisplay = (dateString: string) => {
-    const [year, month, day] = dateString.split('-');
-    const date = new Date(parseInt(year), parseInt(month) - 1, parseInt(day));
-    const options: Intl.DateTimeFormatOptions = { weekday: 'long', year: 'numeric', month: 'long', day: 'numeric' };
-    return date.toLocaleDateString('en-US', options);
-  };
-
-  useEffect(() => {
-    const handleClickOutside = (e: MouseEvent) => {
-      if (calendarRef.current && !calendarRef.current.contains(e.target as Node)) {
-        const target = e.target as HTMLElement;
-        if (!target.closest('.date-picker-wrapper')) {
-          onToggleCalendar(false);
-        }
-      }
-    };
-
-    document.addEventListener('click', handleClickOutside);
-    return () => document.removeEventListener('click', handleClickOutside);
-  }, [onToggleCalendar]);
-
-  const monthNames = ['January', 'February', 'March', 'April', 'May', 'June',
-    'July', 'August', 'September', 'October', 'November', 'December'];
-  const weekdays = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
-
-  const firstDay = new Date(currentYear, currentMonth, 1).getDay();
-  const daysInMonth = new Date(currentYear, currentMonth + 1, 0).getDate();
-  const today = new Date();
-  const todayMidnight = new Date(today);
-  todayMidnight.setHours(0, 0, 0, 0);
-
-  const handlePrevMonth = () => {
-    if (currentMonth === 0) {
-      setCurrentMonth(11);
-      setCurrentYear(currentYear - 1);
-    } else {
-      setCurrentMonth(currentMonth - 1);
+  const days = useMemo(() => {
+    const start = new Date(view.year, view.month, 1);
+    const count = new Date(view.year, view.month + 1, 0).getDate();
+    const cells: ({ key: string; day: number; state: DayState } | null)[] = Array.from({ length: start.getDay() }, () => null);
+    for (let day = 1; day <= count; day += 1) {
+      const key = toDateKey(new Date(view.year, view.month, day));
+      cells.push({ key, day, state: dayState(key, availability) });
     }
-  };
+    return cells;
+  }, [view, availability]);
 
-  const handleNextMonth = () => {
-    if (currentMonth === 11) {
-      setCurrentMonth(0);
-      setCurrentYear(currentYear + 1);
-    } else {
-      setCurrentMonth(currentMonth + 1);
-    }
-  };
+  const openCount = days.filter((cell) => cell && (cell.state === 'open' || cell.state === 'limited')).length;
+  const canPrev = new Date(view.year, view.month, 1) > new Date(first.getFullYear(), first.getMonth(), 1);
+  const canNext = new Date(view.year, view.month + 1, 1) <= last;
+  const monthLabel = new Date(view.year, view.month, 1).toLocaleDateString('en-US', { month: 'long', year: 'numeric' });
 
-  const handleDayClick = (dateString: string) => {
-    onDateSelect(dateString);
-    onToggleCalendar(false);
-  };
-
-  const renderDays = () => {
-    const days = [];
-
-    // Empty cells before first day
-    for (let i = 0; i < firstDay; i++) {
-      days.push(<div key={`empty-${i}`} className="calendar-day other-month"></div>);
-    }
-
-    // Days of the month
-    for (let day = 1; day <= daysInMonth; day++) {
-      const date = new Date(currentYear, currentMonth, day);
-      const dateString = formatDateToString(date);
-      const isPast = date < todayMidnight;
-      const isToday = dateString === formatDateToString(today);
-      const isBlocked = blockedDates.includes(dateString);
-      const isSelected = selectedDate === dateString;
-
-      let classes = 'calendar-day';
-      if (isPast) classes += ' disabled';
-      if (isToday) classes += ' today';
-      if (isBlocked) classes += ' blocked';
-      if (isSelected) classes += ' selected';
-
-      days.push(
-        <div
-          key={day}
-          className={classes}
-          data-date={dateString}
-          onClick={() => {
-            if (!isPast && !isBlocked) {
-              handleDayClick(dateString);
-            }
-          }}
-        >
-          {day}
-        </div>
-      );
-    }
-
-    return days;
-  };
+  const move = (delta: number) =>
+    setView((current) => {
+      const next = new Date(current.year, current.month + delta, 1);
+      return { year: next.getFullYear(), month: next.getMonth() };
+    });
 
   return (
-    <div className="form-field">
-      <label>Select Date *</label>
-      <div className="date-picker-wrapper">
-        <input
-          type="text"
-          id="bookingDate"
-          name="date"
-          placeholder="Choose a date"
-          readOnly
-          required
-          value={selectedDate ? formatDateDisplay(selectedDate) : ''}
-          onClick={() => onToggleCalendar(!showCalendar)}
-        />
-        <div className="calendar-icon">
-          <svg width="20" height="20" viewBox="0 0 20 20" fill="none">
-            <rect x="3" y="4" width="14" height="14" rx="2" stroke="currentColor" strokeWidth="1.5" />
-            <path d="M3 8H17M7 2V4M13 2V4" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" />
-          </svg>
+    <div className={`calendar ${disabled ? 'is-disabled' : ''}`}>
+      <div className="calendar-head">
+        <button type="button" className="icon-btn icon-btn-sm" onClick={() => move(-1)} disabled={!canPrev} aria-label="Previous month">
+          <ChevronLeft size={18} />
+        </button>
+        <div className="calendar-title">
+          <strong>{monthLabel}</strong>
+          {availability.status === 'ready' && (
+            <span className={openCount > 0 ? 'calendar-open' : 'calendar-none'}>
+              {openCount > 0 ? `${openCount} ${openCount === 1 ? 'date' : 'dates'} still open` : 'No open dates this month'}
+            </span>
+          )}
+          {availability.status === 'loading' && <span className="calendar-muted">Checking availability…</span>}
         </div>
+        <button type="button" className="icon-btn icon-btn-sm" onClick={() => move(1)} disabled={!canNext} aria-label="Next month">
+          <ChevronRight size={18} />
+        </button>
       </div>
-      {showCalendar && (
-        <div ref={calendarRef} className="calendar-container" style={{ display: 'block' }}>
-          <div className="calendar-header">
-            <button type="button" className="calendar-nav-btn" onClick={handlePrevMonth}>
-              <svg width="20" height="20" viewBox="0 0 20 20" fill="none">
-                <path d="M12 4L6 10L12 16" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"/>
-              </svg>
+
+      <div className="calendar-grid" role="grid" aria-label={`Dates in ${monthLabel}`}>
+        {WEEKDAYS.map((weekday) => (
+          <span key={weekday} className="calendar-weekday" role="columnheader">
+            {weekday}
+          </span>
+        ))}
+        {days.map((cell, index) =>
+          cell ? (
+            <button
+              key={cell.key}
+              type="button"
+              role="gridcell"
+              className={`calendar-day is-${cell.state} ${value === cell.key ? 'is-selected' : ''}`}
+              disabled={disabled || !['open', 'limited'].includes(cell.state)}
+              aria-pressed={value === cell.key}
+              aria-label={`${new Date(`${cell.key}T00:00:00`).toLocaleDateString('en-US', { weekday: 'long', month: 'long', day: 'numeric' })}: ${STATE_LABEL[cell.state]}`}
+              title={availability.blocked[cell.key] && cell.state === 'blocked' ? 'Unavailable' : STATE_LABEL[cell.state]}
+              onClick={() => onChange(cell.key)}
+            >
+              {cell.day}
             </button>
-            <div className="calendar-month-year">{monthNames[currentMonth]} {currentYear}</div>
-            <button type="button" className="calendar-nav-btn" onClick={handleNextMonth}>
-              <svg width="20" height="20" viewBox="0 0 20 20" fill="none">
-                <path d="M8 4L14 10L8 16" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"/>
-              </svg>
-            </button>
-          </div>
-          <div className="calendar-weekdays">
-            {weekdays.map(day => (
-              <div key={day} className="calendar-weekday">{day}</div>
-            ))}
-          </div>
-          <div className="calendar-days">
-            {renderDays()}
-          </div>
-        </div>
-      )}
+          ) : (
+            <span key={`blank-${index}`} className="calendar-blank" aria-hidden="true" />
+          )
+        )}
+      </div>
+
+      <ul className="calendar-legend" aria-hidden="true">
+        <li><span className="dot is-open" /> Open</li>
+        <li><span className="dot is-limited" /> Some times taken</li>
+        <li><span className="dot is-full" /> Booked / unavailable</li>
+      </ul>
     </div>
   );
 }

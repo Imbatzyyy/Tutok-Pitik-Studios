@@ -1,6 +1,6 @@
-import { Hono } from "npm:hono";
-import { cors } from "npm:hono/cors";
-import { logger } from "npm:hono/logger";
+import { Hono } from "npm:hono@4.13.17";
+import { cors } from "npm:hono@4.13.17/cors";
+import { logger } from "npm:hono@4.13.17/logger";
 import * as kv from "./kv_store.tsx";
 import { createClient } from "npm:@supabase/supabase-js";
 import nodemailer from "npm:nodemailer";
@@ -187,15 +187,18 @@ async function requireAuthenticatedProfile(c: any) {
   }
 
   const profile = await getDatabaseUser(auth.user.id);
-  if (!profile) {
+  if (!profile || (profile.status ?? 'active') !== 'active') {
     return null;
   }
 
-  return { ...auth, profile };
+  return {
+    ...auth,
+    profile: { ...profile, role: profile.role === 'super_admin' ? 'superadmin' : profile.role },
+  };
 }
 
 async function sendBookingConfirmationEmail(booking: any) {
-  if (!getMailgunConfig() || !booking?.email) {
+  if (!getSmtpConfig() || !booking?.email) {
     return null;
   }
 
@@ -1351,8 +1354,8 @@ app.post("/make-server-032fda65/users", async (c) => {
       return c.json({ error: 'Unauthorized' }, 401);
     }
 
-    if (!contentAdminRoles.includes(auth.profile.role)) {
-      return c.json({ error: 'Forbidden - Admin access required' }, 403);
+    if (auth.profile.role !== 'superadmin') {
+      return c.json({ error: 'Forbidden - Superadmin access required' }, 403);
     }
 
     const { email, password, fullName, role, username, status } = await c.req.json();
@@ -1405,8 +1408,8 @@ app.get("/make-server-032fda65/users/all", async (c) => {
       return c.json({ error: 'Unauthorized' }, 401);
     }
 
-    if (!adminRoles.includes(auth.profile.role)) {
-      return c.json({ error: 'Forbidden - Admin access required' }, 403);
+    if (auth.profile.role !== 'superadmin') {
+      return c.json({ error: 'Forbidden - Superadmin access required' }, 403);
     }
 
     const { data: allUsers, error } = await supabase
@@ -1434,8 +1437,8 @@ app.put("/make-server-032fda65/users/:id", async (c) => {
       return c.json({ error: 'Unauthorized' }, 401);
     }
 
-    if (!contentAdminRoles.includes(auth.profile.role)) {
-      return c.json({ error: 'Forbidden - Admin access required' }, 403);
+    if (auth.profile.role !== 'superadmin') {
+      return c.json({ error: 'Forbidden - Superadmin access required' }, 403);
     }
 
     const targetUserId = c.req.param('id');
@@ -1493,8 +1496,8 @@ app.delete("/make-server-032fda65/users/:id", async (c) => {
       return c.json({ error: 'Unauthorized' }, 401);
     }
 
-    if (!contentAdminRoles.includes(auth.profile.role)) {
-      return c.json({ error: 'Forbidden - Admin access required' }, 403);
+    if (auth.profile.role !== 'superadmin') {
+      return c.json({ error: 'Forbidden - Superadmin access required' }, 403);
     }
 
     const targetUserId = c.req.param('id');

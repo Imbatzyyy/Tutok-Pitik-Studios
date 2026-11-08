@@ -1,3 +1,0 @@
-# Netlify redirects for Single Page Application
-# This ensures all routes are handled by the React app
-/*    /index.html   200

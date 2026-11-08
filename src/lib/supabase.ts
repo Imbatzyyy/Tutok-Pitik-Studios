@@ -59,7 +59,19 @@ if (!supabaseUrl || !supabaseAnonKey) {
   );
 }
 
+// Local testing only: VITE_DEMO_MODE=true swaps the network for an in-memory
+// backend (see demo.ts). Production builds drop this branch entirely.
+// A build-time constant, so the demo banner is also stripped from production.
+export const isDemoMode = import.meta.env.VITE_DEMO_MODE === 'true';
+
+const demoFetch: typeof fetch | undefined = isDemoMode
+  ? (await import('./demo')).createDemoFetch(supabaseUrl)
+  : undefined;
+
+export const appFetch: typeof fetch = demoFetch || ((...args) => fetch(...args));
+
 export const supabase = createClient(supabaseUrl, supabaseAnonKey, {
+  global: demoFetch ? { fetch: demoFetch } : undefined,
   auth: {
     persistSession: true,
     autoRefreshToken: true,

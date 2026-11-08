@@ -1,156 +1,87 @@
-import { FormEvent, useEffect, useMemo, useState } from 'react';
-import { ArrowLeft, CheckCircle2, KeyRound } from 'lucide-react';
+import { useEffect, useMemo, useState, type FormEvent } from 'react';
+import { ArrowLeft, CircleCheck, KeyRound, LoaderCircle } from 'lucide-react';
+import logoImage from '../assets/logo-160.png';
 import { supabase } from '../lib/supabase';
+import { errorMessage } from '../lib/api';
 
 export default function ResetPasswordPage() {
   const [password, setPassword] = useState('');
-  const [confirmPassword, setConfirmPassword] = useState('');
+  const [confirm, setConfirm] = useState('');
   const [status, setStatus] = useState<'checking' | 'ready' | 'invalid' | 'success'>('checking');
   const [error, setError] = useState('');
   const [submitting, setSubmitting] = useState(false);
 
   const hasRecoveryHash = useMemo(() => {
-    if (typeof window === 'undefined') return false;
     const hash = new URLSearchParams(window.location.hash.replace(/^#/, ''));
     return hash.get('type') === 'recovery' || hash.has('access_token');
   }, []);
 
   useEffect(() => {
-    const initializeRecovery = async () => {
-      const { data: { session } } = await supabase.auth.getSession();
-      if (session || hasRecoveryHash) {
-        setStatus('ready');
-      } else {
-        setStatus('invalid');
-      }
-    };
-
-    void initializeRecovery();
-
+    document.title = 'Reset password · Tutok Pitik Studios';
+    supabase.auth.getSession().then(({ data: { session } }) => setStatus(session || hasRecoveryHash ? 'ready' : 'invalid'));
     const { data: { subscription } } = supabase.auth.onAuthStateChange((event, session) => {
       if (event === 'PASSWORD_RECOVERY' || (event === 'SIGNED_IN' && session)) {
         setStatus('ready');
         setError('');
       }
     });
-
-    return () => {
-      subscription.unsubscribe();
-    };
+    return () => subscription.unsubscribe();
   }, [hasRecoveryHash]);
 
-  const handleSubmit = async (event: FormEvent<HTMLFormElement>) => {
+  const submit = async (event: FormEvent) => {
     event.preventDefault();
     setError('');
-
-    if (!password || password.length < 6) {
-      setError('Password must be at least 6 characters.');
-      return;
-    }
-
-    if (password !== confirmPassword) {
-      setError('Passwords do not match.');
-      return;
-    }
-
+    if (password.length < 8) return setError('Use at least 8 characters.');
+    if (password !== confirm) return setError('Passwords do not match.');
     setSubmitting(true);
-
     try {
       const { error: updateError } = await supabase.auth.updateUser({ password });
-      if (updateError) {
-        throw updateError;
-      }
-
+      if (updateError) throw updateError;
       setStatus('success');
-      setPassword('');
-      setConfirmPassword('');
       window.history.replaceState({}, document.title, '/reset-password');
     } catch (err) {
-      setError(err instanceof Error ? err.message : 'Unable to reset password.');
+      setError(errorMessage(err, 'Unable to reset password.'));
     } finally {
       setSubmitting(false);
     }
   };
 
   return (
-    <div className="auth-overlay reset-password-page">
-      <div className="auth-modal" onClick={(event) => event.stopPropagation()}>
-        <div className="auth-header">
-          <div className="auth-icon">
-            {status === 'success' ? <CheckCircle2 size={32} /> : <KeyRound size={32} />}
+    <main className="reset-page">
+      <div className="ui-modal ui-modal-sm reset-card">
+        <img src={logoImage} alt="Tutok Pitik Studios" width={64} height={64} className="reset-logo" />
+        <header className="ui-modal-header">
+          <div className="ui-modal-icon">{status === 'success' ? <CircleCheck size={22} /> : <KeyRound size={22} />}</div>
+          <div className="ui-modal-heading">
+            <h1>{status === 'success' ? 'Password updated' : 'Set a new password'}</h1>
+            <p>{status === 'success' ? 'You can now sign in with your new password.' : 'Choose a new password for your account.'}</p>
           </div>
-          <h2>{status === 'success' ? 'Password Updated' : 'Reset Your Password'}</h2>
-          <p>
-            {status === 'success'
-              ? 'Your password has been updated. You can return to the homepage and sign in with the new password.'
-              : 'Create a new password for your account to finish the recovery process.'}
-          </p>
-        </div>
-
-        {status === 'checking' && <div className="auth-success-banner">Checking your recovery link...</div>}
-
-        {status === 'invalid' && (
-          <div className="auth-error-banner">
-            This recovery link is invalid or has expired. Please request a new password reset email.
-          </div>
-        )}
-
-        {status === 'ready' && (
-          <form onSubmit={handleSubmit} className="auth-form">
-            {error && <div className="auth-error-banner">{error}</div>}
-
-            <div className="form-group">
-              <label htmlFor="reset-password">
-                <KeyRound size={18} />
-                New Password
-              </label>
-              <input
-                id="reset-password"
-                name="password"
-                type="password"
-                value={password}
-                onChange={(event) => setPassword(event.target.value)}
-                placeholder="Enter your new password"
-                autoFocus
-              />
-            </div>
-
-            <div className="form-group">
-              <label htmlFor="reset-password-confirm">
-                <KeyRound size={18} />
-                Confirm Password
-              </label>
-              <input
-                id="reset-password-confirm"
-                name="confirmPassword"
-                type="password"
-                value={confirmPassword}
-                onChange={(event) => setConfirmPassword(event.target.value)}
-                placeholder="Confirm your new password"
-              />
-            </div>
-
-            <button type="submit" className="auth-submit-btn" disabled={submitting}>
-              {submitting ? 'Updating Password...' : 'Update Password'}
-            </button>
-          </form>
-        )}
-
-        {status === 'success' && (
-          <a href="/" className="auth-submit-btn" style={{ display: 'inline-flex', justifyContent: 'center', textDecoration: 'none' }}>
-            Back to Homepage
+        </header>
+        <div className="ui-modal-body">
+          {status === 'checking' && <div className="loading-row"><LoaderCircle size={18} className="spin" /> Checking your link…</div>}
+          {status === 'invalid' && <div className="notice notice-danger"><p>This reset link is invalid or has expired. Request a new one from the sign-in window.</p></div>}
+          {status === 'ready' && (
+            <form className="auth-form" onSubmit={submit} noValidate>
+              {error && <div className="notice notice-danger" role="alert"><p>{error}</p></div>}
+              <div className="field">
+                <label htmlFor="reset-password">New password</label>
+                <input id="reset-password" type="password" autoComplete="new-password" value={password} onChange={(event) => setPassword(event.target.value)} autoFocus />
+                <p className="field-hint">At least 8 characters.</p>
+              </div>
+              <div className="field">
+                <label htmlFor="reset-confirm">Confirm new password</label>
+                <input id="reset-confirm" type="password" autoComplete="new-password" value={confirm} onChange={(event) => setConfirm(event.target.value)} />
+              </div>
+              <button type="submit" className="btn btn-primary btn-block" disabled={submitting}>
+                {submitting && <LoaderCircle size={16} className="spin" />} Update password
+              </button>
+            </form>
+          )}
+          <a className="btn btn-ghost btn-block reset-home" href="/">
+            <ArrowLeft size={16} /> Back to the website
           </a>
-        )}
-
-        <div className="auth-switch">
-          <p>
-            <a href="/" style={{ display: 'inline-flex', alignItems: 'center', gap: '8px' }}>
-              <ArrowLeft size={16} />
-              Return Home
-            </a>
-          </p>
         </div>
       </div>
-    </div>
+    </main>
   );
 }
