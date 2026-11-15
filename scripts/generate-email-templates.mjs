@@ -120,7 +120,7 @@ for (const [kind, heading, message, action] of auth) {
         : "This link is private and time limited. If you did not request this email, you can safely ignore it. Never forward a sign-in or password-reset link.",
   });
   writeFileSync(new URL(kind + ".html", dir), html + "\n");
-  manifest[`mailer_subjects_${kind}`] = `${heading} · Tutok Pitik Studios`;
+  manifest[`mailer_subjects_${kind}`] = `${kind === "recovery" ? "Reset your studio password" : heading} · Tutok Pitik Studios`;
   manifest[`mailer_templates_${kind}_content`] = html;
 }
 writeFileSync(

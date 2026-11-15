@@ -105,6 +105,14 @@ blindly replay them with a CLI migration push.
 - Live access checks rejected anonymous dispatch, unknown/invalid booking IDs,
   customer queue access and customer self-approval. Repeated dispatch sent zero
   additional messages. Both legacy frontend notification routes also work.
+- A second fixture `TPS-0E937C` verified the final shared email design. Resend
+  showed Delivered for all three booking events, signup verification, welcome,
+  profile update and password recovery. Recovery initially used the provider's
+  default template despite saved configuration; refreshing that template and
+  resending verified the actual branded subject and HTML. All 13 configured
+  Auth subjects/templates were read back and matched the repository manifest.
+- The live website was signed into with the fixture account; the GCash QR image,
+  reference field, receipt uploader and booking status were visibly verified.
 - The fixture uses the studio's Gmail plus-address; no actual customer was
   contacted and no money was moved. The test account and booking were removed.
 
