@@ -7,6 +7,8 @@ import { Hono } from 'hono';
 import { cors } from 'hono/cors';
 import { logger } from 'hono/logger';
 
+const emailModule = {};
+vm.runInNewContext(ts.transpileModule(readFileSync(new URL('../supabase/functions/_shared/email.ts', import.meta.url), 'utf8'), {compilerOptions:{module:ts.ModuleKind.CommonJS,target:ts.ScriptTarget.ES2022}}).outputText, {exports:emailModule});
 const source = readFileSync(new URL('../supabase/functions/make-server-032fda65/index.ts', import.meta.url), 'utf8');
 const compiled = ts.transpileModule(source, {
   compilerOptions: { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2022, esModuleInterop: true },
@@ -57,11 +59,11 @@ function harness({ role = 'superadmin', status = 'active', missing = false, look
   const modules = {
     'npm:hono@4.13.17': { Hono }, 'npm:hono@4.13.17/cors': { cors }, 'npm:hono@4.13.17/logger': { logger },
     'npm:@supabase/supabase-js': { createClient: () => supabase },
-    'npm:nodemailer': { createTransport: blockIO },
+    '../_shared/email.ts': emailModule,
     './kv_store.tsx': { del: async (key) => { events.push(`kv.delete:${key}`); } },
   };
   const context = vm.createContext({
-    exports: {}, Request, Response, Headers, URL, fetch: blockIO,
+    exports: {}, Request, Response, Headers, URL, AbortSignal, fetch: blockIO,
     console: { log() {}, error() {}, warn() {} },
     Deno: { env: { get: () => undefined }, serve: (fn) => { handler = fn; } },
     require: (name) => {
@@ -130,3 +132,13 @@ assert.equal((await health.request('GET', '/health', undefined, false)).status, 
 assert.deepEqual(health.events, []);
 cases++;
 console.log(`PASS: ${cases} offline Hono route cases; no credentials, network, mail, or real data access.`);
+
+const legacySignup = harness();
+assert.equal((await legacySignup.request('POST', '/auth/signup', {email:'fixture@example.invalid'}, false)).status, 410);
+assert.deepEqual(legacySignup.events, []);
+for (const route of ['/send-welcome-email','/send-profile-update-email']) {
+ const h = harness();
+ assert.equal((await h.request('POST', route, {}, false)).status, 401);
+ assert.deepEqual(h.events, []);
+}
+console.log('Legacy signup bypass is retired; unauthenticated account-email requests are blocked.');

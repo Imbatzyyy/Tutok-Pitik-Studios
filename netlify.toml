@@ -2,7 +2,7 @@
 
 [build]
   publish = "dist"
-  command = "npm run typecheck && npm run test:edge-access && npm run build"
+  command = "npm run typecheck && npm run test:edge-access && npm run test:booking-emails && npm run build"
 
 [build.environment]
   NODE_VERSION = "22"

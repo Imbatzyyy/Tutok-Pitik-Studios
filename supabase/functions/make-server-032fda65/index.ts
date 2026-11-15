@@ -3,7 +3,7 @@ import { cors } from "npm:hono@4.13.17/cors";
 import { logger } from "npm:hono@4.13.17/logger";
 import * as kv from "./kv_store.tsx";
 import { createClient } from "npm:@supabase/supabase-js";
-import nodemailer from "npm:nodemailer";
+import { accountContent, STUDIO_EMAIL } from "../_shared/email.ts";
 
 const app = new Hono();
 
@@ -124,60 +124,18 @@ async function getDatabaseUser(userId: string) {
   return data;
 }
 
-const getSmtpConfig = () => {
-  const host = Deno.env.get('SMTP_HOST');
-  const port = Number(Deno.env.get('SMTP_PORT') || '587');
-  const username = Deno.env.get('SMTP_USERNAME');
-  const password = Deno.env.get('SMTP_PASSWORD');
-  const fromEmail = Deno.env.get('SMTP_FROM_EMAIL') || Deno.env.get('MAILGUN_FROM_EMAIL') || 'noreply@tutokpitikstudios.com';
-  const fromName = Deno.env.get('SMTP_FROM_NAME') || 'Tutok Pitik Studios';
-
-  if (!host || !port || !username || !password) {
-    return null;
-  }
-
-  return {
-    host,
-    port,
-    username,
-    password,
-    from: `${fromName} <${fromEmail}>`,
-    secure: port === 465,
-  };
-};
-
-async function sendMailgunEmail({ to, subject, html }: { to: string | string[]; subject: string; html: string }) {
-  const config = getSmtpConfig();
-  if (!config) {
-    console.error('SMTP configuration missing');
-    return { ok: false, status: 500, data: { message: 'SMTP configuration missing' } };
-  }
-
-  const recipients = Array.isArray(to) ? to.filter(Boolean) : [to].filter(Boolean);
-
-  try {
-    const transporter = nodemailer.createTransport({
-      host: config.host,
-      port: config.port,
-      secure: config.secure,
-      auth: {
-        user: config.username,
-        pass: config.password,
-      },
-    });
-
-    const info = await transporter.sendMail({
-      from: config.from,
-      to: recipients.join(', '),
-      subject,
-      html,
-    });
-
-    return { ok: true, status: 200, data: { messageId: info.messageId, response: info.response } };
-  } catch (error) {
-    console.error('SMTP send error:', error);
-    return { ok: false, status: 500, data: { message: error instanceof Error ? error.message : 'SMTP send failed' } };
-  }
+async function sendAccountEmail(to: string, kind: 'welcome' | 'profile', name: string, idempotencyKey: string) {
+  const key = Deno.env.get('RESEND_API_KEY');
+  const from = Deno.env.get('RESEND_FROM_EMAIL');
+  if (!key || !from) throw new Error('Email service unavailable');
+  const response = await fetch('https://api.resend.com/emails', {
+    method: 'POST',
+    headers: { Authorization: `Bearer ${key}`, 'Content-Type': 'application/json', 'Idempotency-Key': idempotencyKey },
+    body: JSON.stringify({ from, to: [to], reply_to: STUDIO_EMAIL, ...accountContent(kind, name) }),
+    signal: AbortSignal.timeout(15000),
+  });
+  if (!response.ok) throw new Error('Email delivery unavailable');
+  return (await response.json()).id;
 }
 
 async function requireAuthenticatedProfile(c: any) {
@@ -197,81 +155,7 @@ async function requireAuthenticatedProfile(c: any) {
   };
 }
 
-async function sendBookingConfirmationEmail(booking: any) {
-  if (!getSmtpConfig() || !booking?.email) {
-    return null;
-  }
 
-  const bookingDate = booking.booking_date
-    ? new Date(booking.booking_date).toLocaleDateString('en-US', {
-        weekday: 'long',
-        year: 'numeric',
-        month: 'long',
-        day: 'numeric',
-      })
-    : 'To be announced';
-
-  const formatTime = (value?: string) => {
-    if (!value) return 'TBD';
-    const [rawHours = '0', rawMinutes = '00'] = String(value).split(':');
-    const hours = Number(rawHours);
-    const minutes = String(rawMinutes).slice(0, 2);
-    const suffix = hours >= 12 ? 'PM' : 'AM';
-    const displayHours = hours % 12 || 12;
-    return `${displayHours}:${minutes} ${suffix}`;
-  };
-
-  const bookingTime = `${formatTime(booking.start_time)} - ${formatTime(booking.end_time)}`;
-  const totalAmount = Number(booking.total_price || 0).toLocaleString('en-PH', {
-    minimumFractionDigits: 2,
-    maximumFractionDigits: 2,
-  });
-
-  const confirmationEmailHTML = `
-<!DOCTYPE html>
-<html lang="en">
-  <head>
-    <meta charset="UTF-8" />
-    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>Booking Confirmed</title>
-  </head>
-  <body style="margin:0;padding:0;background:#09090b;font-family:Arial,sans-serif;color:#f4f4f5;">
-    <div style="max-width:620px;margin:0 auto;padding:32px 18px;">
-      <div style="background:linear-gradient(180deg,#1b1214 0%,#111113 100%);border:1px solid rgba(230,57,70,0.25);border-radius:28px;overflow:hidden;box-shadow:0 20px 50px rgba(0,0,0,0.35);">
-        <div style="padding:34px 32px 22px;background:radial-gradient(circle at top, rgba(230,57,70,0.28), transparent 60%);text-align:center;">
-          <img src="https://tutokpitikstudios.com/favicon.png" alt="Tutok Pitik Studios" style="width:76px;height:76px;border-radius:20px;display:block;margin:0 auto 18px;" />
-          <div style="display:inline-block;padding:8px 14px;border-radius:999px;background:rgba(230,57,70,0.16);color:#ffb4ba;font-size:12px;font-weight:700;letter-spacing:0.12em;text-transform:uppercase;">Booking Approved</div>
-          <h1 style="margin:18px 0 10px;font-size:34px;line-height:1.1;color:#ffffff;">Your Shoot Is Confirmed</h1>
-          <p style="margin:0 auto;max-width:470px;color:#d4d4d8;font-size:16px;line-height:1.7;">Hi ${booking.full_name || 'there'}, your booking request has been approved. Your status is now confirmed in Tutok Pitik Studios.</p>
-        </div>
-        <div style="padding:0 32px 34px;">
-          <div style="background:#18181b;border:1px solid #2b2b31;border-radius:22px;padding:24px;">
-            <h2 style="margin:0 0 18px;color:#ffffff;font-size:18px;">Confirmed Booking Details</h2>
-            <table role="presentation" width="100%" cellspacing="0" cellpadding="0" style="border-collapse:collapse;">
-              <tr><td style="padding:10px 0;color:#a1a1aa;font-size:13px;border-bottom:1px solid #27272a;">Service</td><td style="padding:10px 0;color:#ffffff;font-size:14px;font-weight:700;text-align:right;border-bottom:1px solid #27272a;">${booking.service || 'Photography Session'}</td></tr>
-              <tr><td style="padding:10px 0;color:#a1a1aa;font-size:13px;border-bottom:1px solid #27272a;">Date</td><td style="padding:10px 0;color:#ffffff;font-size:14px;font-weight:700;text-align:right;border-bottom:1px solid #27272a;">${bookingDate}</td></tr>
-              <tr><td style="padding:10px 0;color:#a1a1aa;font-size:13px;border-bottom:1px solid #27272a;">Time</td><td style="padding:10px 0;color:#ffffff;font-size:14px;font-weight:700;text-align:right;border-bottom:1px solid #27272a;">${bookingTime}</td></tr>
-              <tr><td style="padding:10px 0;color:#a1a1aa;font-size:13px;border-bottom:1px solid #27272a;">Location</td><td style="padding:10px 0;color:#ffffff;font-size:14px;font-weight:700;text-align:right;border-bottom:1px solid #27272a;">${booking.location || 'To be confirmed'}</td></tr>
-              <tr><td style="padding:14px 0 0;color:#ffb4ba;font-size:13px;font-weight:700;">Confirmed Total</td><td style="padding:14px 0 0;color:#ffffff;font-size:26px;font-weight:800;text-align:right;">PHP ${totalAmount}</td></tr>
-            </table>
-          </div>
-          <div style="margin-top:18px;background:#131316;border:1px solid #26262b;border-radius:18px;padding:18px 20px;color:#d4d4d8;font-size:14px;line-height:1.7;">
-            Please review your updated booking status in your <strong>Profile &gt; Bookings</strong> tab. If you need to request changes, kindly contact the studio as soon as possible.
-          </div>
-        </div>
-      </div>
-    </div>
-  </body>
-</html>`;
-
-  const emailResult = await sendMailgunEmail({
-    to: booking.email,
-    subject: 'Booking Confirmed | Tutok Pitik Studios',
-    html: confirmationEmailHTML,
-  });
-
-  return emailResult.ok ? emailResult.data : null;
-}
 
 app.use('*', logger(console.log));
 
@@ -399,446 +283,57 @@ app.post("/make-server-032fda65/users/verify-phone-otp", async (c) => {
   }
 });
 
-app.post("/make-server-032fda65/auth/signup", async (c) => {
-  try {
-    const payload = await c.req.json();
-    const email = typeof payload.email === 'string' ? payload.email.trim().toLowerCase() : '';
-    const password = typeof payload.password === 'string' ? payload.password : '';
-    const firstName = typeof payload.firstName === 'string' ? payload.firstName.trim() : '';
-    const lastName = typeof payload.lastName === 'string' ? payload.lastName.trim() : '';
-    const username = typeof payload.username === 'string' ? payload.username.trim() : '';
-    const fullName = [firstName, lastName].filter(Boolean).join(' ').trim();
+// The current website uses Supabase Auth directly, preserving verification and
+// provider rate limits. The legacy service-role signup bypass is retired.
+app.post('/make-server-032fda65/auth/signup', c => c.json({ error: 'Use the website signup form to verify your email address.' }, 410));
 
-    if (!email || !password || !firstName || !lastName || !username) {
-      return c.json({ error: 'Missing required signup fields.' }, 400);
-    }
-
-    const { data, error } = await supabase.auth.admin.createUser({
-      email,
-      password,
-      email_confirm: true,
-      user_metadata: {
-        full_name: fullName,
-        username,
-        role: 'customer',
-      },
-    });
-
-    if (error) {
-      return c.json({ error: error.message }, 400);
-    }
-
-    let profile = null;
-    for (let attempt = 0; attempt < 5; attempt += 1) {
-      const { data: profileRow } = await supabase
-        .from('users')
-        .select('*')
-        .eq('id', data.user.id)
-        .maybeSingle();
-
-      if (profileRow) {
-        profile = profileRow;
-        break;
-      }
-
-      await new Promise((resolve) => setTimeout(resolve, 300 * (attempt + 1)));
-    }
-
-    return c.json({ success: true, user: data.user, profile });
-  } catch (error) {
-    console.error('Direct signup error:', error);
-    return c.json({ error: error instanceof Error ? error.message : 'Unable to create account' }, 500);
-  }
-});
-
-
-app.post("/make-server-032fda65/send-welcome-email", async (c) => {
-  try {
-    const auth = await requireAuthenticatedUser(c);
-    if (!auth?.user?.email) {
-      return c.json({ error: 'Unauthorized' }, 401);
-    }
-
-    const { fullName } = await c.req.json();
-    const email = auth.user.email;
-
-    if (!getSmtpConfig()) {
-      console.error('SMTP configuration missing');
-      return c.json({ error: 'Email service not configured' }, 500);
-    }
-
-    const emailHTML = `
-<!DOCTYPE html>
-<html>
-<head>
-  <meta charset="UTF-8">
-  <style>
-    body { font-family: 'Inter', Arial, sans-serif; background-color: #000; margin: 0; padding: 0; }
-    .container { max-width: 600px; margin: 0 auto; background-color: #18181b; }
-    .header { background: linear-gradient(135deg, #E63946 0%, #c62e3a 100%); padding: 40px 30px; text-align: center; }
-    .header h1 { color: white; font-size: 28px; margin: 0 0 10px 0; font-weight: 800; }
-    .header p { color: rgba(255,255,255,0.9); margin: 0; font-size: 14px; }
-    .content { padding: 40px 30px; color: #e4e4e7; }
-    .content h2 { color: white; font-size: 24px; margin: 0 0 20px 0; }
-    .content p { line-height: 1.6; margin-bottom: 15px; color: #d4d4d8; }
-    .button { display: inline-block; background-color: #E63946; color: white; padding: 14px 28px; text-decoration: none; border-radius: 8px; font-weight: 600; margin: 20px 0; }
-    .footer { background-color: #09090b; color: #71717a; text-align: center; padding: 30px; font-size: 12px; }
-  </style>
-</head>
-<body>
-  <div class="container">
-    <div class="header">
-      <h1>📸 Welcome to Tutok Pitik Studios!</h1>
-      <p>Your photography journey starts here</p>
-    </div>
-    <div class="content">
-      <h2>Hi ${fullName}!</h2>
-      <p>Thank you for joining Tutok Pitik Studios. We're excited to have you as part of our community!</p>
-      <p>With your account, you can:</p>
-      <ul style="color: #d4d4d8; line-height: 1.8;">
-        <li>Book photography sessions online</li>
-        <li>Save your favorite portfolio images</li>
-        <li>Manage your bookings and profile</li>
-        <li>Access exclusive photography content</li>
-      </ul>
-      <p>Ready to get started? Explore our portfolio and book your first session!</p>
-      <a href="${Deno.env.get('SITE_URL') || 'https://tutokpitik.com'}" class="button">Visit Website</a>
-    </div>
-    <div class="footer">
-      <p><strong>Tutok Pitik Studios</strong></p>
-      <p>Professional Photography Services</p>
-      <p style="margin-top: 10px;">© ${new Date().getFullYear()} Tutok Pitik Studios. All rights reserved.</p>
-    </div>
-  </div>
-</body>
-</html>`;
-
-    const emailResult = await sendMailgunEmail({
-      to: email,
-      subject: '📸 Welcome to Tutok Pitik Studios!',
-      html: emailHTML,
-    });
-
-    if (!emailResult.ok) {
-      return c.json({ error: 'Failed to send email', details: emailResult.data }, 500);
-    }
-
-    console.log('Welcome email sent successfully:', emailResult.data);
-    return c.json({ success: true, messageId: emailResult.data?.id || emailResult.data?.message });
-
-  } catch (error) {
-    console.error('Send welcome email error:', error);
-    return c.json({ error: error.message }, 500);
-  }
-});
-
-app.post("/make-server-032fda65/send-booking-email", async (c) => {
-  try {
-    const auth = await requireAuthenticatedUser(c);
-    if (!auth?.user?.email) {
-      return c.json({ error: 'Unauthorized' }, 401);
-    }
-
-    const { booking } = await c.req.json();
-    if (!booking?.email) {
-      return c.json({ error: 'Booking email is required' }, 400);
-    }
-
-    
-    if (!getSmtpConfig()) {
-      return c.json({ error: 'Email service not configured' }, 500);
-    }
-    const bookingDate = booking.booking_date
-      ? new Date(booking.booking_date).toLocaleDateString('en-US', {
-          weekday: 'long',
-          year: 'numeric',
-          month: 'long',
-          day: 'numeric',
-        })
-      : 'To be announced';
-
-    const formatTime = (value?: string) => {
-      if (!value) return 'TBD';
-      const [rawHours = '0', rawMinutes = '00'] = String(value).split(':');
-      const hours = Number(rawHours);
-      const minutes = String(rawMinutes).slice(0, 2);
-      const suffix = hours >= 12 ? 'PM' : 'AM';
-      const displayHours = hours % 12 || 12;
-      return `${displayHours}:${minutes} ${suffix}`;
-    };
-
-    const bookingTime = `${formatTime(booking.start_time)} - ${formatTime(booking.end_time)}`;
-    const totalAmount = Number(booking.total_price || 0).toLocaleString('en-PH', {
-      minimumFractionDigits: 2,
-      maximumFractionDigits: 2,
-    });
-
-    const customerEmailHTML = `
-<!DOCTYPE html>
-<html lang="en">
-  <head>
-    <meta charset="UTF-8" />
-    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>Booking Request Received</title>
-  </head>
-  <body style="margin:0;padding:0;background:#09090b;font-family:Arial,sans-serif;color:#f4f4f5;">
-    <div style="max-width:620px;margin:0 auto;padding:32px 18px;">
-      <div style="background:linear-gradient(180deg,#1b1214 0%,#111113 100%);border:1px solid rgba(230,57,70,0.25);border-radius:28px;overflow:hidden;box-shadow:0 20px 50px rgba(0,0,0,0.35);">
-        <div style="padding:34px 32px 22px;background:radial-gradient(circle at top, rgba(230,57,70,0.28), transparent 60%);text-align:center;">
-          <img src="https://tutokpitikstudios.com/favicon.png" alt="Tutok Pitik Studios" style="width:76px;height:76px;border-radius:20px;display:block;margin:0 auto 18px;" />
-          <div style="display:inline-block;padding:8px 14px;border-radius:999px;background:rgba(230,57,70,0.16);color:#ffb4ba;font-size:12px;font-weight:700;letter-spacing:0.12em;text-transform:uppercase;">Booking Request Received</div>
-          <h1 style="margin:18px 0 10px;font-size:34px;line-height:1.1;color:#ffffff;">Your Booking Is In Review</h1>
-          <p style="margin:0 auto;max-width:470px;color:#d4d4d8;font-size:16px;line-height:1.7;">Hi ${booking.full_name || 'there'}, thank you for choosing Tutok Pitik Studios. Your request has been submitted and is now waiting for admin approval.</p>
-        </div>
-        <div style="padding:0 32px 34px;">
-          <div style="background:#18181b;border:1px solid #2b2b31;border-radius:22px;padding:24px;">
-            <h2 style="margin:0 0 18px;color:#ffffff;font-size:18px;">Booking Summary</h2>
-            <table role="presentation" width="100%" cellspacing="0" cellpadding="0" style="border-collapse:collapse;">
-              <tr><td style="padding:10px 0;color:#a1a1aa;font-size:13px;border-bottom:1px solid #27272a;">Service</td><td style="padding:10px 0;color:#ffffff;font-size:14px;font-weight:700;text-align:right;border-bottom:1px solid #27272a;">${booking.service || 'Photography Session'}</td></tr>
-              <tr><td style="padding:10px 0;color:#a1a1aa;font-size:13px;border-bottom:1px solid #27272a;">Date</td><td style="padding:10px 0;color:#ffffff;font-size:14px;font-weight:700;text-align:right;border-bottom:1px solid #27272a;">${bookingDate}</td></tr>
-              <tr><td style="padding:10px 0;color:#a1a1aa;font-size:13px;border-bottom:1px solid #27272a;">Time</td><td style="padding:10px 0;color:#ffffff;font-size:14px;font-weight:700;text-align:right;border-bottom:1px solid #27272a;">${bookingTime}</td></tr>
-              <tr><td style="padding:10px 0;color:#a1a1aa;font-size:13px;border-bottom:1px solid #27272a;">Location</td><td style="padding:10px 0;color:#ffffff;font-size:14px;font-weight:700;text-align:right;border-bottom:1px solid #27272a;">${booking.location || 'To be confirmed'}</td></tr>
-              <tr><td style="padding:14px 0 0;color:#ffb4ba;font-size:13px;font-weight:700;">Estimated Total</td><td style="padding:14px 0 0;color:#ffffff;font-size:26px;font-weight:800;text-align:right;">PHP ${totalAmount}</td></tr>
-            </table>
-          </div>
-          <div style="margin-top:18px;background:#131316;border:1px solid #26262b;border-radius:18px;padding:18px 20px;color:#d4d4d8;font-size:14px;line-height:1.7;">
-            You can track the latest booking status anytime in your <strong>Profile &gt; Bookings</strong> tab. Once our team confirms your schedule, you will receive a second confirmation email.
-          </div>
-        </div>
-      </div>
-    </div>
-  </body>
-</html>`;
-
-    const customerResult = await sendMailgunEmail({
-      to: booking.email || auth.user.email,
-      subject: 'Booking Request Received | Tutok Pitik Studios',
-      html: customerEmailHTML,
-    });
-
-    const customerData = customerResult.data;
-    if (!customerResult.ok) {
-      console.error('Customer booking email failed:', customerData);
-      return c.json({ error: 'Failed to send customer booking email', details: customerData }, 500);
-    }
-
-    const adminEmailHTML = `
-<!DOCTYPE html>
-<html>
-<head>
-  <meta charset="UTF-8">
-  <style>
-    body { font-family: 'Inter', Arial, sans-serif; background-color: #f1f5f9; margin: 0; padding: 0; }
-    .container { max-width: 600px; margin: 20px auto; background-color: white; border-radius: 12px; overflow: hidden; box-shadow: 0 4px 6px rgba(0,0,0,0.1); }
-    .header { background-color: #E63946; padding: 30px; text-align: center; }
-    .header h1 { color: white; margin: 0; font-size: 24px; }
-    .content { padding: 30px; }
-    .booking-card { background-color: #f8fafc; border: 1px solid #e2e8f0; padding: 20px; margin: 20px 0; border-radius: 8px; }
-    .booking-row { display: flex; justify-content: space-between; padding: 8px 0; }
-    .label { color: #64748b; font-size: 14px; }
-    .value { color: #1e293b; font-weight: 600; }
-    .alert { background-color: #fef3c7; border-left: 4px solid #f59e0b; padding: 15px; margin: 20px 0; }
-  </style>
-</head>
-<body>
-  <div class="container">
-    <div class="header">
-      <h1>🔔 New Booking Received</h1>
-    </div>
-    <div class="content">
-      <div class="alert">
-        <strong>Action Required:</strong> A new booking needs your attention.
-      </div>
-      
-      <div class="booking-card">
-        <h3 style="margin-top: 0; color: #E63946;">Customer Information</h3>
-        <div class="booking-row">
-          <span class="label">Name:</span>
-          <span class="value">${booking.full_name}</span>
-        </div>
-        <div class="booking-row">
-          <span class="label">Email:</span>
-          <span class="value">${booking.email}</span>
-        </div>
-        <div class="booking-row">
-          <span class="label">Phone:</span>
-          <span class="value">${booking.phone}</span>
-        </div>
-      </div>
-      
-      <div class="booking-card">
-        <h3 style="margin-top: 0; color: #E63946;">Booking Details</h3>
-        <div class="booking-row">
-          <span class="label">Service:</span>
-          <span class="value">${booking.service}</span>
-        </div>
-        <div class="booking-row">
-          <span class="label">Date:</span>
-          <span class="value">${new Date(booking.booking_date).toLocaleDateString('en-US', { weekday: 'long', year: 'numeric', month: 'long', day: 'numeric' })}</span>
-        </div>
-        <div class="booking-row">
-          <span class="label">Time:</span>
-          <span class="value">${booking.start_time} - ${booking.end_time} (${booking.duration}h)</span>
-        </div>
-        <div class="booking-row">
-          <span class="label">Location:</span>
-          <span class="value">${booking.location}</span>
-        </div>
-        <div class="booking-row">
-          <span class="label">Total Amount:</span>
-          <span class="value" style="color: #E63946; font-size: 18px;">₱${Number(booking.total_price || 0).toLocaleString()}</span>
-        </div>
-        ${booking.message ? `
-        <div class="booking-row" style="flex-direction: column; align-items: flex-start;">
-          <span class="label">Message:</span>
-          <span class="value" style="margin-top: 8px;">${booking.message}</span>
-        </div>` : ''}
-      </div>
-      
-      <p><strong>Next Steps:</strong></p>
-      <ul>
-        <li>Contact the customer to confirm availability</li>
-        <li>Discuss any special requirements</li>
-        <li>Update booking status in the dashboard</li>
-      </ul>
-    </div>
-  </div>
-</body>
-</html>`;
-
-    const adminResult = await sendMailgunEmail({
-      to: Deno.env.get('BOOKING_NOTIFICATION_EMAIL') || Deno.env.get('SITE_OWNER_EMAIL') || 'admin@tutokpitik.com',
-      subject: '🔔 New Booking: ' + booking.service + ' - ' + new Date(booking.booking_date).toLocaleDateString(),
-      html: adminEmailHTML,
-    });
-
-    const adminData = adminResult.data;
-    if (!adminResult.ok) {
-      console.error('Admin booking notification failed:', adminData);
-      return c.json({ success: true, customerEmail: customerData, adminWarning: adminData });
-    }
-
-    return c.json({ 
-      success: true, 
-      customerEmail: customerData,
-      adminEmail: adminData 
-    });
-
-  } catch (error) {
-    console.error('Send booking email error:', error);
-    return c.json({ error: error.message }, 500);
-  }
-});
-
-app.post("/make-server-032fda65/send-booking-confirmation-email", async (c) => {
-  try {
+for (const [path, kind] of [['send-welcome-email', 'welcome'], ['send-profile-update-email', 'profile']] as const) {
+  app.post(`/make-server-032fda65/${path}`, async c => {
     const auth = await requireAuthenticatedProfile(c);
-    if (!auth?.user?.email) {
-      return c.json({ error: 'Unauthorized' }, 401);
+    if (!auth?.user?.email || !auth.user.email_confirmed_at) return c.json({ error: 'Verified account required' }, 401);
+    try {
+      // Names and recipients are read from the authenticated account, not JSON.
+      const version = kind === 'welcome' ? 'initial' : auth.profile.updated_at;
+      const messageId = await sendAccountEmail(auth.user.email, kind, auth.profile.full_name,
+        `tps-account/${kind}/${auth.user.id}/${version}`);
+      return c.json({ success: true, messageId });
+    } catch {
+      return c.json({ error: 'Email delivery is temporarily unavailable' }, 503);
     }
+  });
+}
 
-    if (!adminRoles.includes(auth.profile.role)) {
-      return c.json({ error: 'Forbidden' }, 403);
-    }
+async function dispatchBookingEmails(bookingId: string, accessToken: string) {
+  const response = await fetch(`${Deno.env.get('SUPABASE_URL')}/functions/v1/booking-emails`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${accessToken}` },
+    body: JSON.stringify({ bookingId }),
+  });
+  return response.ok;
+}
 
-    const { booking } = await c.req.json();
-    if (!booking?.email) {
-      return c.json({ error: 'Booking email is required' }, 400);
-    }
-
-    if (!getSmtpConfig()) {
-      return c.json({ error: 'Email service not configured' }, 500);
-    }
-
-    const result = await sendBookingConfirmationEmail(booking);
-    return c.json({ success: true, confirmationEmail: result });
-  } catch (error) {
-    console.error('Send booking confirmation email error:', error);
-    return c.json({ error: error.message }, 500);
-  }
-});
+// Compatibility routes for existing clients. Recipients, content and send-once
+// state come exclusively from the database queue, never the posted booking.
+for (const path of ['/send-booking-email', '/send-booking-confirmation-email']) {
+  app.post(`/make-server-032fda65${path}`, async (c) => {
+    const auth = await requireAuthenticatedProfile(c);
+    if (!auth) return c.json({ error: 'Unauthorized' }, 401);
+    let payload: any;
+    try { payload = await c.req.json(); } catch { return c.json({ error: 'Invalid request' }, 400); }
+    const id = payload?.bookingId || payload?.booking?.id;
+    if (typeof id !== 'string' || !/^[0-9a-f]{8}-[0-9a-f-]{27}$/i.test(id)) return c.json({ error: 'Booking ID required' }, 400);
+    const { data: booking } = await supabase.from('bookings').select('user_id').eq('id', id).maybeSingle();
+    if (!booking || (booking.user_id !== auth.user.id && !adminRoles.includes(auth.profile.role))) return c.json({ error: 'Booking not found' }, 404);
+    try { await dispatchBookingEmails(id, auth.accessToken); } catch { /* scheduled queue retries */ }
+    return c.json({ success: true, queued: true });
+  });
+}
 
 app.post("/make-server-032fda65/send-password-reset-email", async (c) => {
   return c.json({
     error: 'Deprecated endpoint. Use supabase.auth.resetPasswordForEmail from the client application.'
   }, 410);
 });
-
-app.post("/make-server-032fda65/send-profile-update-email", async (c) => {
-  try {
-    const auth = await requireAuthenticatedUser(c);
-    if (!auth?.user?.email) {
-      return c.json({ error: 'Unauthorized' }, 401);
-    }
-
-    const { fullName, updatedFields } = await c.req.json();
-    const email = auth.user.email;
-
-    if (!getSmtpConfig()) {
-      return c.json({ error: 'Email service not configured' }, 500);
-    }
-
-    const emailHTML = `
-<!DOCTYPE html>
-<html>
-<head>
-  <meta charset="UTF-8">
-  <style>
-    body { font-family: 'Inter', Arial, sans-serif; background-color: #000; margin: 0; padding: 0; }
-    .container { max-width: 600px; margin: 0 auto; background-color: #18181b; }
-    .header { background: linear-gradient(135deg, #E63946 0%, #c62e3a 100%); padding: 40px 30px; text-align: center; }
-    .header h1 { color: white; font-size: 28px; margin: 0 0 10px 0; }
-    .content { padding: 40px 30px; color: #e4e4e7; }
-    .update-list { background-color: #27272a; padding: 20px; border-radius: 8px; margin: 20px 0; }
-    .update-list li { padding: 8px 0; color: #d4d4d8; }
-    .footer { background-color: #09090b; color: #71717a; text-align: center; padding: 30px; font-size: 12px; }
-  </style>
-</head>
-<body>
-  <div class="container">
-    <div class="header">
-      <h1>✅ Profile Updated</h1>
-    </div>
-    <div class="content">
-      <h2 style="color: white;">Hi ${fullName}!</h2>
-      <p>Your profile information has been successfully updated.</p>
-      
-      <div class="update-list">
-        <h3 style="color: #E63946; margin-top: 0;">Updated Fields:</h3>
-        <ul>
-          ${updatedFields.map(field => `<li>${field}</li>`).join('')}
-        </ul>
-      </div>
-      
-      <p>Updated on: ${new Date().toLocaleDateString('en-US', { weekday: 'long', year: 'numeric', month: 'long', day: 'numeric', hour: '2-digit', minute: '2-digit' })}</p>
-      <p style="color: #a1a1aa; font-size: 14px; margin-top: 30px;">If you didn't make these changes, please contact us immediately.</p>
-    </div>
-    <div class="footer">
-      <p><strong>Tutok Pitik Studios</strong></p>
-      <p>© ${new Date().getFullYear()} Tutok Pitik Studios. All rights reserved.</p>
-    </div>
-  </div>
-</body>
-</html>`;
-
-    const emailResult = await sendMailgunEmail({
-      to: email,
-      subject: '✅ Profile Updated - Tutok Pitik Studios',
-      html: emailHTML,
-    });
-
-    if (!emailResult.ok) {
-      return c.json({ error: 'Failed to send email', details: emailResult.data }, 500);
-    }
-
-    return c.json({ success: true, messageId: emailResult.data?.id || emailResult.data?.message });
-
-  } catch (error) {
-    console.error('Send profile update email error:', error);
-    return c.json({ error: error.message }, 500);
-  }
-});
-
 
 app.post("/make-server-032fda65/bookings", async (c) => {
   try {
@@ -960,8 +455,8 @@ app.put("/make-server-032fda65/bookings/:id", async (c) => {
     }
 
     const isAdmin = adminRoles.includes(auth.profile.role);
-    if (booking.user_id !== auth.user.id && !isAdmin) {
-      return c.json({ error: 'Forbidden' }, 403);
+    if (!isAdmin) {
+      return c.json({ error: 'Only studio staff can update bookings' }, 403);
     }
 
     const updatePayload: Record<string, unknown> = {
@@ -988,7 +483,7 @@ app.put("/make-server-032fda65/bookings/:id", async (c) => {
 
     if (isAdmin && updates.status === 'confirmed' && previousStatus !== 'confirmed') {
       try {
-        await sendBookingConfirmationEmail(updatedBooking);
+        await dispatchBookingEmails(bookingId, auth.accessToken);
       } catch (emailError) {
         console.error('Booking confirmation email error:', emailError);
       }

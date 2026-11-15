@@ -71,6 +71,11 @@ project change.
 
 ## Email exception accepted for this cutover
 
+**Update, 15 November:** Resend now handles booking notifications and Supabase
+Auth emails. The original cutover exception below is historical. See
+[the booking email release](BOOKING-EMAILS-2026-11-15.md) for current behavior and
+delivery verification.
+
 The existing Mailgun credentials fail provider authentication. The user chose to
 continue with Supabase's default account-email service and keep the custom email
 templates backed up. Supabase rejected applying custom templates without custom

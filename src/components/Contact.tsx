@@ -8,7 +8,7 @@ import { SERVICE_ICONS } from './Services';
 import { DOWNPAYMENT_RATE, MAX_ACTIVE_BOOKINGS, SERVICES, STUDIO, findService } from '../content/site';
 import { freeEndHours, freeStartHours, hourToTime, isRangeFree, timeToHour, type AvailabilityState } from '../lib/availability';
 import { ACTIVE_STATUSES, bookingReference, buildBookingMessage } from '../lib/bookings';
-import { escapeHtml, formatDateLong, formatPeso, formatPesoExact, formatTime, hoursLabel } from '../lib/format';
+import { formatDateLong, formatPeso, formatPesoExact, formatTime, hoursLabel } from '../lib/format';
 import { compressImage, randomId, RECEIPTS_BUCKET, uploadToBucket } from '../lib/images';
 import { errorMessage, isMissingRelation, notify } from '../lib/api';
 import { supabase } from '../lib/supabase';
@@ -267,7 +267,7 @@ export default function Contact({ user, availability, prefill, onSuccess, onRequ
       const { data: booking, error } = await supabase.from('bookings').insert(row).select('*').single();
       if (error || !booking) throw new Error(error?.message || 'We could not save your booking.');
 
-      void notify('/send-booking-email', { booking: { ...row, id: booking.id, message: escapeHtml(draft.notes.trim()) } });
+      void notify('/send-booking-email', { bookingId: booking.id });
 
       const success: BookingSuccess = {
         reference: bookingReference(booking),

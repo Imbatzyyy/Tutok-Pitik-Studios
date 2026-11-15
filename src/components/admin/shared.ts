@@ -116,7 +116,7 @@ export async function saveBooking(booking: NormalizedBooking, changes: BookingCh
   if (!data) throw new Error('This booking could not be updated. Your account may not have permission.');
 
   if (nextStatus === 'confirmed' && booking.status !== 'confirmed') {
-    void notify('/send-booking-confirmation-email', { booking: data });
+    void notify('/send-booking-confirmation-email', { bookingId: data.id });
   }
 
   return normalizeBooking(data);
