@@ -58,5 +58,36 @@ account can ever be compromised. Authorized studio staff can manage bookings.
   denial, cross-account isolation, privilege escalation, queue denial, suspended
   access and authorized team photo access; every fixture rolled back.
 
-Production deployment and real Google return verification are recorded after
-release below. No payment flow or booking-email business logic was changed.
+## Production verification
+
+- Google app published as External / In production; basic identity scopes only.
+- Supabase Google provider enabled; nonce checks enabled and email required.
+- Production code commit `659a9942c98dbe1c04555e62a2041f8b94e81240` deployed
+  successfully through Netlify deployment `6afa6865f899b2293749a86c` at
+  2026-11-16 10:20:47 Asia/Manila.
+- Real Google login on the live domain linked to the owner's existing verified
+  email account: one account, email + Google identities, original three bookings
+  and one saved favorite still visible. No duplicate account was created.
+- Sign-out and repeat login from the booking form succeeded; the return was
+  `/#contact`, the chosen Portrait service remained selected, and browser
+  error/warning logs were empty. No booking or payment was submitted.
+- Desktop and 390px phone layouts checked. Local cancelled-login handling
+  displayed a safe retry message and removed error parameters from history.
+- Live `/auth/callback` and `/reset-password` responses have no-store,
+  no-referrer and noindex headers; CSP and HSTS are present on live pages.
+- Applied database policies passed the same transactional checks again; fixtures
+  were rolled back. Existing profile-image object count was zero.
+- Exact Google client secret, Supabase service and management credentials,
+  Netlify token and Resend key were absent from the browser build and staged
+  changes. The SDK contains the literal key-format prefix `sb_secret_`, not a
+  secret credential.
+
+Google currently identifies the consent destination by the studio's Supabase
+project hostname. The consent page links to the studio's privacy and terms pages;
+no unverified-app warning appeared. Custom consent branding/domain verification
+is separate from the working sign-in integration.
+
+No payment flow or booking-email business logic was changed. Email sending
+remains at 100/hour for Supabase Auth. Private config backups are outside Git;
+the one-time Google credential handoff file was removed after saving it in
+Supabase. Screenshots are local release evidence under `docs/evidence/`.
