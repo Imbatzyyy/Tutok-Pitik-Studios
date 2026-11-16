@@ -16,7 +16,7 @@ type PolicySection = { id: string; title: string; content: ReactNode };
 
 const privacySections: PolicySection[] = [
   { id: 'responsibility', title: 'Who is responsible for your information', content: <>
-    <p><strong>{STUDIO.name}</strong>, based in {STUDIO.location}, is the personal information controller for information used to operate this website and manage studio reservations. Our studio team handles privacy requests through <a href={PRIVACY_EMAIL}>{STUDIO.email}</a> or <a href={STUDIO.phoneHref}>{STUDIO.phoneDisplay}</a>.</p>
+    <p><strong>{STUDIO.name}</strong>, based in {STUDIO.location}, is the personal information controller for information used to operate this website and manage studio reservations. Our studio team handles privacy requests by email at <a href={PRIVACY_EMAIL}>{STUDIO.email}</a>.</p>
     <p>This notice covers website accounts, inquiries, bookings, payment verification and related customer communications. It explains our responsibilities under the <strong>Philippine Data Privacy Act of 2012 (Republic Act No. 10173)</strong>, its Implementing Rules and Regulations and applicable National Privacy Commission (NPC) issuances. We aim to make processing transparent, use information for legitimate purposes and collect only what is needed.</p>
   </> },
   { id: 'information', title: 'What we collect and where it comes from', content: <>
