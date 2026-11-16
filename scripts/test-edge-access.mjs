@@ -28,7 +28,7 @@ function harness({ role = 'superadmin', status = 'active', missing = false, look
   const events = [];
   const profile = { id: 'actor', role, status };
   const supabase = {
-    rpc:async (name,args)=>{assert.equal(name,"studio_admin_session_valid");assert.equal(args.p_user_id,"actor");return {data:portal,error:portalError?{message:"offline failure"}:null};},
+    rpc:async (name,args)=>{if(name==='studio_service_account_update'){assert.equal(args.p_actor,'actor');assert.equal(args.p_target,'target');events.push('db.update');return {data:{id:'target',...args.p_changes},error:null};}assert.equal(name,"studio_admin_session_valid");assert.equal(args.p_user_id,"actor");return {data:portal,error:portalError?{message:"offline failure"}:null};},
     auth: {
       getUser: async () => {
         events.push('auth.lookup');

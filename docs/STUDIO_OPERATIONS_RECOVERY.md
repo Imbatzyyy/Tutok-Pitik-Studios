@@ -10,7 +10,7 @@ Start with **Overview**, then use the booking views or calendar. Each booking ha
 
 ## Payments and communications
 
-Payments remain manual GCash / external transactions. Verify the actual incoming transaction before approving its proof. A screenshot alone is not proof of settled money. Record final payments and completed refunds in the ledger. Corrections use reversal entries rather than deleting financial history. Approving a refund request does not transfer money.
+Payments remain manual GCash / external transactions. Verify the actual incoming transaction before approving its proof. A screenshot alone is not proof of settled money. Older embedded receipt images remain visible as imported proof; new images/PDFs use private storage with a 10 MB limit and expiring viewing links. Existing proof objects cannot be overwritten. Record final payments and completed refunds in the ledger. Corrections use reversal entries rather than deleting financial history. Approving a refund request does not transfer money.
 
 Email delivery is queued transactionally with deduplication and bounded retries. **Sent** means Resend accepted the message. **Delivered** means a signed provider delivery event was received; it does not prove that a person read the email. Bounces, failures and complaints are visible in Notifications. An ambiguous send beyond the provider's safe retry window requires delivery review.
 

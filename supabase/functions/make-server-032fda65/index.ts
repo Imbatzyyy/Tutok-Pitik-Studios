@@ -714,16 +714,7 @@ app.post("/make-server-032fda65/users", async (c) => {
       return c.json({ error: createError?.message || 'Failed to create user' }, 500);
     }
 
-    const { data: createdUser, error: profileError } = await supabase
-      .from('users')
-      .update({
-        username: username || null,
-        role,
-        status:'active',
-      })
-      .eq('id', createdAuthUser.user.id)
-      .select('*')
-      .single();
+    const { data: createdUser, error: profileError } = await supabase.rpc('studio_service_account_update',{p_actor:auth.user.id,p_target:createdAuthUser.user.id,p_changes:{username:username||null,role,status:'active'}});
 
     if (profileError) {
       return c.json({ error: profileError.message }, 500);
@@ -794,12 +785,7 @@ app.put("/make-server-032fda65/users/:id", async (c) => {
     if (typeof updates.status === 'string') dbUpdates.status = updates.status;
     if (typeof updates.phone === 'string') dbUpdates.phone = updates.phone;
 
-    const { data: updatedUser, error: updateError } = await supabase
-      .from('users')
-      .update(dbUpdates)
-      .eq('id', targetUserId)
-      .select('*')
-      .single();
+    const { data: updatedUser, error: updateError } = await supabase.rpc('studio_service_account_update',{p_actor:auth.user.id,p_target:targetUserId,p_changes:dbUpdates});
 
     if (updateError) {
       return c.json({ error: updateError.message }, 500);
