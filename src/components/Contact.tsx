@@ -4,6 +4,7 @@ import { toast } from 'sonner';
 import BookingCalendar from './BookingCalendar';
 import ConfirmDialog from './common/ConfirmDialog';
 import Modal from './common/Modal';
+import PrivacyHighlight from './PrivacyHighlight';
 import { SERVICE_ICONS } from './Services';
 import { DOWNPAYMENT_RATE, MAX_ACTIVE_BOOKINGS, SERVICES, STUDIO, findService } from '../content/site';
 import { freeEndHours, freeStartHours, hourToTime, isRangeFree, timeToHour, type AvailabilityState } from '../lib/availability';
@@ -74,6 +75,7 @@ export default function Contact({ user, availability, prefill, onSuccess, onRequ
   const [receipt, setReceipt] = useState<{ blob: Blob; dataUrl: string; name: string } | null>(null);
   const [receiptBusy, setReceiptBusy] = useState(false);
   const [errors, setErrors] = useState<Record<string, string>>({});
+  const [bookingAgreed, setBookingAgreed] = useState(false);
   const [confirmOpen, setConfirmOpen] = useState(false);
   const [authPromptOpen, setAuthPromptOpen] = useState(false);
   const [submitting, setSubmitting] = useState(false);
@@ -199,11 +201,12 @@ export default function Contact({ user, availability, prefill, onSuccess, onRequ
     } catch {
       /* the database enforces nothing here; allow submit if the check fails */
     }
+    setBookingAgreed(false);
     setConfirmOpen(true);
   };
 
   const submitBooking = async () => {
-    if (submittingRef.current || !service || !draft.date || draft.start === null || !hours || !receipt) return;
+    if (!bookingAgreed || submittingRef.current || !service || !draft.date || draft.start === null || !hours || !receipt) return;
     submittingRef.current = true;
     setSubmitting(true);
 
@@ -607,6 +610,7 @@ export default function Contact({ user, availability, prefill, onSuccess, onRequ
             </fieldset>
 
             <div className="summary-inline">{summary}</div>
+            <PrivacyHighlight />
 
             <button type="submit" className="btn btn-primary btn-lg btn-block" disabled={isTeam || submitting}>
               {submitting ? <LoaderCircle size={20} className="spin" /> : <CalendarCheck size={20} />}
@@ -644,6 +648,7 @@ export default function Contact({ user, availability, prefill, onSuccess, onRequ
         title="Submit this booking?"
         message="Please check the details. We will review your payment and confirm by email."
         confirmLabel={submitting ? 'Submitting…' : 'Submit booking'}
+        confirmDisabled={!bookingAgreed || submitting}
         icon={<CalendarCheck size={22} />}
         onCancel={() => !submitting && setConfirmOpen(false)}
         onConfirm={submitBooking}
@@ -657,6 +662,11 @@ export default function Contact({ user, availability, prefill, onSuccess, onRequ
           <div><dt>Downpayment sent</dt><dd>{formatPesoExact(downpayment)} · Ref {reference}</dd></div>
           <div><dt>Balance on shoot day</dt><dd>{formatPesoExact(total - downpayment)} + transportation (if any)</dd></div>
         </dl>
+        <label className="checkbox checkbox-block agreement-box">
+          <input type="checkbox" checked={bookingAgreed} aria-describedby="booking-agreement-help" onChange={(event) => setBookingAgreed(event.target.checked)} />
+          <span>I agree to the <a href="/terms" target="_blank" rel="noopener noreferrer">Terms and Conditions</a> and acknowledge that I have read the <a href="/privacy" target="_blank" rel="noopener noreferrer">Data Privacy Notice (RA 10173)</a>.</span>
+        </label>
+        <p id="booking-agreement-help" className="agreement-help">Links open in a new tab. Your details are used to manage this booking and send service emails. This does not authorize marketing or public use of your photos.</p>
       </ConfirmDialog>
 
       <Modal

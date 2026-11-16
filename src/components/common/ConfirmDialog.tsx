@@ -8,6 +8,7 @@ interface ConfirmDialogProps {
   message?: ReactNode;
   confirmLabel?: string;
   cancelLabel?: string;
+  confirmDisabled?: boolean;
   tone?: 'danger' | 'primary';
   icon?: ReactNode;
   onConfirm: () => void | Promise<void>;
@@ -15,11 +16,11 @@ interface ConfirmDialogProps {
   children?: ReactNode;
 }
 
-export default function ConfirmDialog({ open, title, message, confirmLabel = 'Confirm', cancelLabel = 'Cancel', tone = 'primary', icon, onConfirm, onCancel, children }: ConfirmDialogProps) {
+export default function ConfirmDialog({ open, title, message, confirmLabel = 'Confirm', cancelLabel = 'Cancel', confirmDisabled = false, tone = 'primary', icon, onConfirm, onCancel, children }: ConfirmDialogProps) {
   const [busy, setBusy] = useState(false);
 
   const handleConfirm = async () => {
-    if (busy) return;
+    if (busy || confirmDisabled) return;
     setBusy(true);
     try {
       await onConfirm();
@@ -43,7 +44,7 @@ export default function ConfirmDialog({ open, title, message, confirmLabel = 'Co
           <button type="button" className="btn btn-ghost" onClick={onCancel} disabled={busy}>
             {cancelLabel}
           </button>
-          <button type="button" className={`btn ${tone === 'danger' ? 'btn-danger' : 'btn-primary'}`} onClick={handleConfirm} disabled={busy} data-autofocus>
+          <button type="button" className={`btn ${tone === 'danger' ? 'btn-danger' : 'btn-primary'}`} onClick={handleConfirm} disabled={busy || confirmDisabled} data-autofocus={confirmDisabled ? undefined : true}>
             {busy && <LoaderCircle size={16} className="spin" />}
             {confirmLabel}
           </button>

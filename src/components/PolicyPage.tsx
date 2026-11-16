@@ -1,36 +1,165 @@
-import { useEffect } from 'react';
-import { ArrowLeft } from 'lucide-react';
+import { useEffect, type ReactNode } from 'react';
+import { ArrowLeft, ArrowUpRight, LockKeyhole, Mail, Scale, ShieldCheck, UserRoundCheck } from 'lucide-react';
 import logoImage from '../assets/logo-160.png';
-import { STUDIO } from '../content/site';
+import { DOWNPAYMENT_RATE, STUDIO } from '../content/site';
 
-export function PolicyContent({ type }: { type: 'terms' | 'privacy' }) {
-  return type === 'terms' ? <div className="policy-text">
-    <p><strong>Account use.</strong> Use your account for legitimate {STUDIO.name} services, including bookings, inquiries and profile management.</p>
-    <p><strong>Accurate information.</strong> Provide accurate contact and booking details, and keep them up to date.</p>
-    <p><strong>Bookings and payments.</strong> Reservations remain pending until the studio reviews availability and verifies your GCash payment. A submitted booking or email acknowledgment does not itself confirm payment or reserve a date.</p>
-    <p><strong>Google sign-in.</strong> You may use Google to create an account or sign in. Keep your Google account secure; the studio never asks for your Google password.</p>
-    <p><strong>Your responsibility.</strong> Protect your account, sign out on shared devices, and contact us promptly about unauthorized activity.</p>
-    <p><strong>Service arrangements.</strong> Contact the studio to agree on changes, cancellations, rescheduling or refunds. Pricing and service requirements are shown during booking and may change for future bookings.</p>
-    <p><strong>Contact.</strong> Email <a href={`mailto:${STUDIO.email}`}>{STUDIO.email}</a> with account or booking questions.</p>
-  </div> : <div className="policy-text">
-    <p><strong>Who handles your data.</strong> {STUDIO.name} uses your information to provide photography and reservation services. Contact <a href={`mailto:${STUDIO.email}`}>{STUDIO.email}</a> about privacy, access, correction or account deletion.</p>
-    <p><strong>What we collect.</strong> Your name, email, contact details, booking details, payment receipts and files you choose to upload. Google sign-in supplies your basic Google profile, email and account identifier; it does not give us your Google password.</p>
-    <p><strong>How we use it.</strong> To sign you in, associate bookings with your account, verify payments, deliver services and send booking or account emails. Google access is limited to basic identity information; we do not request access to your Gmail messages, contacts or Drive files.</p>
-    <p><strong>Service providers.</strong> Supabase hosts account, database and file services; Netlify hosts the website; Resend delivers transactional emails; Google verifies your identity when you choose Google sign-in. These providers process information needed for those functions and may process it outside the Philippines.</p>
-    <p><strong>Protection and access.</strong> HTTPS protects information in transit, and Supabase encrypts hosted data at rest. Customer records and payment receipts have access controls. Authorized studio personnel can access information needed to manage your booking; this is not end-to-end encryption that hides records from the studio.</p>
-    <p><strong>Browser storage.</strong> Your browser stores your sign-in session and booking draft. “Keep me signed in” retains the session across visits. Sign out after using a shared device.</p>
-    <p><strong>Retention and requests.</strong> We retain information needed to provide services, resolve booking or payment questions and meet applicable obligations. Contact us to request access, correction or deletion; some records may need to be retained for those purposes.</p>
-    <p><strong>Your choices.</strong> Google sign-in is optional; email and password remain available. You can revoke the Google connection in your Google account. Revoking that connection does not itself delete your studio bookings; contact us for account deletion.</p>
+export type PolicyType = 'terms' | 'privacy';
+export const POLICY_VERSION = '2026-11-16';
+const ACT_URL = 'https://privacy.gov.ph/data-privacy-act/';
+const RIGHTS_URL = 'https://privacy.gov.ph/data-subject-rights/';
+const COMPLAINT_URL = 'https://privacy.gov.ph/filing-a-complaint/';
+const PRIVACY_EMAIL = `mailto:${STUDIO.email}?subject=Data%20privacy%20request`;
+
+const external = (url: string, label: string) => <a href={url} target="_blank" rel="noopener noreferrer">{label}<ArrowUpRight size={14} aria-hidden="true" /><span className="sr-only"> (opens in a new tab)</span></a>;
+
+type PolicySection = { id: string; title: string; content: ReactNode };
+
+const privacySections: PolicySection[] = [
+  { id: 'responsibility', title: 'Who is responsible for your information', content: <>
+    <p><strong>{STUDIO.name}</strong>, based in {STUDIO.location}, is the personal information controller for information used to operate this website and manage studio reservations. Our studio team handles privacy requests through <a href={PRIVACY_EMAIL}>{STUDIO.email}</a> or <a href={STUDIO.phoneHref}>{STUDIO.phoneDisplay}</a>.</p>
+    <p>This notice covers website accounts, inquiries, bookings, payment verification and related customer communications. It explains our responsibilities under the <strong>Philippine Data Privacy Act of 2012 (Republic Act No. 10173)</strong>, its Implementing Rules and Regulations and applicable National Privacy Commission (NPC) issuances. We aim to make processing transparent, use information for legitimate purposes and collect only what is needed.</p>
+  </> },
+  { id: 'information', title: 'What we collect and where it comes from', content: <>
+    <ul>
+      <li><strong>Account details:</strong> your name, email, username, mobile number, optional profile photo and account status, provided when you register or update your profile.</li>
+      <li><strong>Google sign-in:</strong> your Google account identifier, email and basic profile information when you choose that option. We do not receive your Google password or request access to Gmail messages, contacts or Drive files.</li>
+      <li><strong>Reservations:</strong> your selected service, date, time, venue, contact details, notes, booking status, photo-delivery links and saved favorites.</li>
+      <li><strong>Payment evidence:</strong> the GCash transaction reference, payment amount and receipt screenshot you provide for manual review. We never ask for your GCash PIN, password or one-time verification code.</li>
+      <li><strong>Communications and technical records:</strong> messages you send us and account, delivery or security logs generated by our service providers, which may include IP addresses, timestamps and browser information.</li>
+    </ul>
+    <p>Please provide only information relevant to your booking. Crop unrelated balances, conversations and other people’s details from receipt screenshots. Do not include government IDs, medical information or other unnecessary sensitive information in booking notes.</p>
+  </> },
+  { id: 'purposes', title: 'Why we use your data and our basis for doing so', content: <>
+    <p>We use necessary account, contact and booking details to respond to your request and deliver the service you book. We use payment evidence to verify your downpayment, and send account or reservation emails to keep you informed. These activities support steps you request before booking and performance of the service agreement.</p>
+    <p>Security and abuse-prevention records support our legitimate interest in protecting accounts and the service, subject to your rights. Records may also be processed to meet applicable legal obligations or address legal claims. Where a purpose requires consent, we will explain it and seek specific permission; sensitive personal information requires an applicable basis under the law.</p>
+    <p><strong>Acknowledging this notice is not blanket consent.</strong> Creating an account or booking does not authorize unrelated marketing or public use of your photographs. Any requested promotional use needs separate permission. We do not sell your personal information.</p>
+  </> },
+  { id: 'security', title: 'How your information is protected', content: <>
+    <div className="policy-safeguards">
+      <div><LockKeyhole size={20} aria-hidden="true" /><strong>Encryption</strong><p>HTTPS/TLS protects website connections. Supabase encrypts hosted account, database and file data at rest using AES-256.</p></div>
+      <div><UserRoundCheck size={20} aria-hidden="true" /><strong>Restricted access</strong><p>Account access rules separate customer records. Receipts and profile photos use private storage. Authorized requests receive time-limited viewing links; keep these links private while valid.</p></div>
+      <div><ShieldCheck size={20} aria-hidden="true" /><strong>Safer sign-in</strong><p>Google verifies your identity through its own sign-in screen. Private service credentials remain on the server, outside the website’s public code.</p></div>
+    </div>
+    <p>Authorized studio personnel and necessary service providers can access information needed to fulfill their responsibilities. Access controls and encryption protect data; they do not make it invisible to the studio or amount to end-to-end encryption.</p>
+    <p>No online system can guarantee absolute security. Keep your email and Google accounts secure, avoid sharing sign-in links, and sign out on shared devices. Report suspected unauthorized access to our privacy contact. If an incident requires notification under applicable privacy law, we will notify affected individuals and the NPC as required.</p>
+    <p className="policy-source">Technical reference: {external('https://supabase.com/security', 'Supabase data-security information')}.</p>
+  </> },
+  { id: 'sharing', title: 'Who receives information', content: <>
+    <p>Information is shared only as needed for the purposes described here, with authorized studio personnel and the following services:</p>
+    <dl className="policy-provider-list">
+      <div><dt>Supabase</dt><dd>Authentication, customer records, bookings and private uploaded files.</dd></div>
+      <div><dt>Netlify</dt><dd>Website delivery and related hosting or technical logs.</dd></div>
+      <div><dt>Resend</dt><dd>Account and booking emails, including delivery information.</dd></div>
+      <div><dt>Google</dt><dd>Optional sign-in, the studio’s Gmail correspondence, and photo delivery when a Google Drive folder is provided.</dd></div>
+      <div><dt>GCash</dt><dd>Your payment is made in GCash under its own terms and privacy notice. The studio receives the payment and reviews the transaction details and screenshot you submit.</dd></div>
+    </dl>
+    <p>Providers may process information outside the Philippines. The studio remains responsible for its processing and for appropriate safeguards when engaging providers. Information may also be disclosed where lawfully required or necessary to establish, exercise or defend legal claims. Links to social networks and payment services are governed by those services’ own privacy notices.</p>
+  </> },
+  { id: 'retention', title: 'How long information is kept', content: <>
+    <p>Account information is used while your account and service relationship remain active. Booking, payment and correspondence records may need to be kept after a shoot to deliver photos, answer questions, resolve disputes or satisfy applicable recordkeeping obligations. Retention depends on the record, outstanding service needs and any legal requirement; this website does not promise automatic deletion after a fixed number of days.</p>
+    <p>Information should be deleted, anonymized or securely disposed of when it is no longer needed for those purposes. Contact us for the retention period applicable to your records or to request deletion. If a record must be retained, we will explain the relevant reason and limit its use. Copies in provider backups may remain until their backup retention cycle ends.</p>
+  </> },
+  { id: 'rights', title: 'Your rights under Philippine privacy law', content: <>
+    <p>Subject to the conditions and exceptions provided by law, you may exercise these rights:</p>
+    <ul className="policy-rights">
+      <li><strong>Be informed</strong> about how and why your information is processed.</li>
+      <li><strong>Access</strong> your personal data and information about its use.</li>
+      <li><strong>Correct</strong> inaccurate or incomplete information.</li>
+      <li><strong>Object</strong> to processing where applicable, or withdraw consent for a consent-based purpose.</li>
+      <li><strong>Request erasure or blocking</strong> when the legal conditions apply.</li>
+      <li><strong>Request data portability</strong> for qualifying electronically processed information.</li>
+      <li><strong>Seek damages and lodge a complaint</strong> when your rights have been violated.</li>
+    </ul>
+    <p>Withdrawing consent does not undo prior lawful processing. Information needed for a contract, legal obligation or another lawful basis may still need to be processed. If necessary booking details cannot be used, we may be unable to provide the requested service.</p>
+    <p className="policy-source">Official guide: {external(RIGHTS_URL, 'NPC data-subject rights')}.</p>
+  </> },
+  { id: 'requests', title: 'How to make a privacy request', content: <>
+    <ol><li>Email <a href={PRIVACY_EMAIL}>{STUDIO.email}</a> with the subject <strong>Data privacy request</strong>.</li><li>Tell us which account or booking is involved and whether you want access, correction, deletion, withdrawal of consent or another action. Do not send passwords, PINs or verification codes.</li><li>We may ask for proportionate proof of identity or authority before disclosing or changing personal data. We will explain what is needed, the next steps, and any lawful reason a request cannot be fulfilled.</li></ol>
+    <p>You may raise a concern with the National Privacy Commission. Its {external(COMPLAINT_URL, 'official complaint instructions')} explain the current filing process. Your rights are not waived by accepting our Terms.</p>
+  </> },
+  { id: 'storage', title: 'Browser storage and automated functions', content: <>
+    <p>This website uses browser storage for your session and booking draft. “Keep me signed in” allows the session to persist across visits; otherwise the app uses session storage. Closing a tab, clearing website data or signing out affects this stored information. On a shared device, sign out and clear website data when you are finished.</p>
+    <p>Software checks sign-in, availability and booking limits, and sends status emails. Payment verification and booking approval are reviewed by studio personnel. The booking workflow does not use automated profiling to make decisions about your eligibility for photography services.</p>
+  </> },
+  { id: 'photos', title: 'Children, other people and photographs', content: <>
+    <p>A parent or legal guardian should arrange bookings for children and handle necessary permissions. If you provide another person’s details, inform them and ensure you are authorized to do so. Share only what is necessary for the session.</p>
+    <p>Agreeing to book a session does not itself give permission to publish a client’s image, testimonial or personal details in our portfolio or advertising. Public use is a separate matter to be discussed and authorized with the relevant person or guardian.</p>
+  </> },
+  { id: 'updates', title: 'Changes to this notice', content: <>
+    <p>The version and update date appear on this page. We will communicate material changes affecting how your data is used before applying them where required, and seek fresh permission when a new purpose requires consent. A new notice does not retrospectively authorize a different use of your information.</p>
+    <p className="policy-source">Read the law: {external(ACT_URL, 'Republic Act No. 10173 — Data Privacy Act of 2012')}. This reference identifies the applicable law; it is not a claim that the NPC has certified or endorsed the studio.</p>
+  </> },
+];
+
+const termsSections: PolicySection[] = [
+  { id: 'scope', title: 'About these terms', content: <>
+    <p>These terms govern accounts and reservations made through {STUDIO.name}’ website. Read them together with the <a href="/privacy" target="_blank" rel="noopener noreferrer">Data Privacy Notice</a> and the service details shown when you book. Questions can be sent to <a href={`mailto:${STUDIO.email}`}>{STUDIO.email}</a>.</p>
+    <p>Accepting these terms means agreeing to the account and reservation rules below. Acknowledging the Privacy Notice means you have been informed about data use; neither action is a waiver of your privacy or consumer rights.</p>
+  </> },
+  { id: 'account', title: 'Your account and safe use', content: <>
+    <p>Provide accurate contact details and use an email or Google account you control. Keep your credentials private and report suspected unauthorized access promptly. You may use Google or email sign-in; the studio will never ask for your Google password, GCash PIN or verification code.</p>
+    <p>Do not impersonate another person, submit false receipts, access another customer’s records, upload unlawful material or interfere with the website. Access may be restricted to investigate misuse or protect users; contact the studio if you believe a restriction is mistaken.</p>
+    <p>Arrange a child’s booking through a parent or legal guardian, and obtain any necessary venue or participant permissions.</p>
+  </> },
+  { id: 'reservation', title: 'When a booking is confirmed', content: <>
+    <p>Choose the service, date, duration and location, then review the summary before submitting. A request starts as <strong>pending</strong>. A receipt upload or acknowledgment email does not by itself confirm payment or reserve the date.</p>
+    <p>The studio reviews availability and payment, then confirms the reservation through your account and email. Please rely on that confirmation before making arrangements that depend on the shoot.</p>
+  </> },
+  { id: 'payment', title: 'Prices, downpayment and payment safety', content: <>
+    <p>Prices are shown in Philippine pesos. The current reservation flow requests a <strong>{DOWNPAYMENT_RATE * 100}% downpayment through the displayed GCash QR</strong>, with the remaining balance due on the shoot day. Check the recipient and amount in your payment app before paying; upload the genuine receipt and transaction reference for review.</p>
+    <p>A transportation fee, where applicable, is assessed after the studio reviews the venue and is shown in your booking before the shoot. Ask about any additional charge and agree on the final arrangements before the service takes place. Changes to future price lists do not automatically change a confirmed booking’s agreed price.</p>
+    <p>Contact us promptly about a duplicate, incorrect or unrecognized payment. Never disclose your wallet password, PIN or one-time code to anyone claiming to process your reservation or refund.</p>
+  </> },
+  { id: 'changes', title: 'Changes, cancellations and refunds', content: <>
+    <p>Contact the studio with your booking reference as soon as you need to change or cancel a session. Rescheduling depends on availability. The effect on fees, payment and delivery must be discussed for your booking and confirmed in writing.</p>
+    <p>These general terms do not impose an automatic forfeiture of every downpayment or a blanket “no refund” rule. Any applicable cancellation or refund condition must be clearly communicated and consistent with your legal rights. If the studio cannot fulfill a confirmed service, contact us to arrange an appropriate reschedule or refund consistent with the agreement and applicable law.</p>
+  </> },
+  { id: 'service', title: 'The shoot and photo delivery', content: <>
+    <p>Coordinate the location, access, participants, coverage, requested output and expected delivery schedule with the studio. Communicate delays or changes promptly. Additional hours or services need an agreed scope and price.</p>
+    <p>Photo-delivery links are made available through your account when ready. Keep those links private and download your files within any retention or availability period communicated for your session. No permanent hosting or fixed delivery deadline is created by these general website terms.</p>
+  </> },
+  { id: 'photo-permission', title: 'Photo use and separate permission', content: <>
+    <p>Your booking agreement does not automatically authorize the studio to publish your photos, testimonial or personal details in advertising or the public portfolio. Any such permission is handled separately, including permission from a guardian where required.</p>
+    <p>Usage rights for delivered photographs, including any commercial use or special licensing, should be agreed for the session. Do not copy or redistribute another client’s photos or private delivery links without permission.</p>
+  </> },
+  { id: 'privacy', title: 'Data protection and communications', content: <>
+    <p>The <a href="/privacy" target="_blank" rel="noopener noreferrer">Data Privacy Notice</a> explains collection, purposes, security, service providers, retention and your rights under Republic Act No. 10173. Booking and account emails support the service you request. Agreement to these terms is not consent to unrelated promotional messages.</p>
+    <p>Encrypted connections, restricted customer-record access and private receipt storage protect the reservation workflow. No online service is risk-free; promptly report a suspected security issue to the studio so it can be investigated.</p>
+  </> },
+  { id: 'fairness', title: 'Fair treatment and resolving concerns', content: <>
+    <p>Philippine law applies to these website terms. Nothing here excludes rights or remedies that applicable law gives you, releases the studio from obligations that cannot lawfully be excluded, or prevents a complaint to a competent regulator or court.</p>
+    <p>For a booking or payment concern, contact <a href={`mailto:${STUDIO.email}`}>{STUDIO.email}</a> with the reference and a clear description. For personal-data concerns, use our <a href={PRIVACY_EMAIL}>privacy contact</a>; you may also consult the {external(COMPLAINT_URL, 'NPC complaint process')}.</p>
+  </> },
+  { id: 'updates', title: 'Updates and your agreement', content: <>
+    <p>The current version is shown on this page. Material changes should be brought to your attention before they apply. A later website update does not silently rewrite the agreed arrangements for an existing confirmed booking or authorize a new use of your personal data.</p>
+    <p>You can read the full Terms and Privacy Notice before continuing, and contact us if anything is unclear.</p>
+  </> },
+];
+
+export function PolicyContent({ type, standalone = false }: { type: PolicyType; standalone?: boolean }) {
+  const sections = type === 'privacy' ? privacySections : termsSections;
+  const Heading = standalone ? 'h2' : 'h3';
+  return <div className="policy-document">
+    <div className="policy-intro">
+      <span className="policy-eyebrow">{type === 'privacy' ? 'REPUBLIC ACT NO. 10173' : 'CLEAR AGREEMENTS. RESPECTED RIGHTS.'}</span>
+      <p className="policy-intro-title">{type === 'privacy' ? 'Philippine Data Privacy Act of 2012' : 'Know what you are agreeing to.'}</p>
+      <p>{type === 'privacy' ? 'Your personal information deserves care. Here is what we collect, how we protect it, and the choices and rights you have.' : 'Clear booking steps, transparent payment expectations and control over your personal information.'}</p>
+      <div className="policy-intro-tags"><span><LockKeyhole size={15} aria-hidden="true" /> Encrypted connections</span><span><UserRoundCheck size={15} aria-hidden="true" /> Restricted record access</span><span><Scale size={15} aria-hidden="true" /> Your rights remain yours</span></div>
+    </div>
+    <div className="policy-layout">
+      <nav className="policy-contents" aria-label={`${type === 'privacy' ? 'Privacy notice' : 'Terms'} contents`}><strong>On this page</strong>{sections.map((s, index) => <a key={s.id} href={`#${type}-${s.id}`} onClick={standalone ? undefined : (event) => { event.preventDefault(); document.getElementById(`${type}-${s.id}`)?.scrollIntoView({ behavior: 'smooth', block: 'start' }); }}>{String(index + 1).padStart(2, '0')} {s.title}</a>)}</nav>
+      <div className="policy-sections">{sections.map((s, index) => <section key={s.id} id={`${type}-${s.id}`} className="policy-section"><Heading><span>{String(index + 1).padStart(2, '0')}</span>{s.title}</Heading><div className="policy-text">{s.content}</div></section>)}</div>
+    </div>
+    <aside className="policy-contact"><Mail size={24} aria-hidden="true" /><div><strong>Questions about your data or agreement?</strong><p>Contact the Tutok Pitik Studios team. Do not send passwords, PINs or verification codes.</p><a href={PRIVACY_EMAIL}>{STUDIO.email}</a><span>{STUDIO.location}</span></div></aside>
   </div>;
 }
 
-export default function PolicyPage({ type }: { type: 'terms' | 'privacy' }) {
+export default function PolicyPage({ type }: { type: PolicyType }) {
   const title = type === 'terms' ? 'Terms and Conditions' : 'Data Privacy Notice';
   useEffect(() => { document.title = `${title} · ${STUDIO.name}`; }, [title]);
   return <main className="policy-page container">
-    <a className="btn btn-ghost" href="/"><ArrowLeft size={18} /> Back to the website</a>
-    <img src={logoImage} alt="Tutok Pitik Studios" width={64} height={64} />
-    <h1>{title}</h1><p className="field-hint">Updated November 16, 2026</p>
-    <PolicyContent type={type} />
+    <div className="policy-topbar"><a className="btn btn-ghost" href="/"><ArrowLeft size={18} /> Back to the website</a><a href={type === 'privacy' ? '/terms' : '/privacy'}>{type === 'privacy' ? 'Terms and Conditions' : 'Data Privacy Notice'} <ArrowUpRight size={16} aria-hidden="true" /></a></div>
+    <header className="policy-page-heading"><img src={logoImage} alt="Tutok Pitik Studios" width={56} height={56} /><div><p className="policy-eyebrow">TUTOK PITIK STUDIOS · YOUR TRUST MATTERS</p><h1>{title}</h1><p className="policy-version">Updated November 16, 2026 · Version {POLICY_VERSION}</p></div></header>
+    <PolicyContent type={type} standalone />
   </main>;
 }

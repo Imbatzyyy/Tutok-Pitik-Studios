@@ -3,7 +3,8 @@ import { Camera, Eye, EyeOff, KeyRound, LoaderCircle, MailCheck } from 'lucide-r
 import Modal from './common/Modal';
 import { getRememberMePreference, setRememberMePreference, supabase } from '../lib/supabase';
 import { prepareGoogleSignIn } from '../lib/google-auth';
-import { PolicyContent } from './PolicyPage';
+import { PolicyContent, POLICY_VERSION } from './PolicyPage';
+import PrivacyHighlight from './PrivacyHighlight';
 import { resolveSessionUser, type SessionUser } from '../lib/session';
 import { errorMessage } from '../lib/api';
 
@@ -54,6 +55,8 @@ export default function Auth({ isOpen, defaultView = 'signin', onClose, onSucces
   const [loading, setLoading] = useState(false);
   const [remember, setRemember] = useState(getRememberMePreference);
   const [agreed, setAgreed] = useState(false);
+  const [googleReview, setGoogleReview] = useState(false);
+  const [googleAgreed, setGoogleAgreed] = useState(false);
   const [policy, setPolicy] = useState<'terms' | 'privacy' | null>(null);
 
   useEffect(() => {
@@ -62,6 +65,9 @@ export default function Auth({ isOpen, defaultView = 'signin', onClose, onSucces
     setErrors({});
     setLoading(false);
     setAgreed(false);
+    setGoogleReview(false);
+    setGoogleAgreed(false);
+    setPolicy(null);
     setForm((current) => ({ ...EMPTY, email: current.email }));
   }, [isOpen, defaultView]);
 
@@ -73,7 +79,7 @@ export default function Auth({ isOpen, defaultView = 'signin', onClose, onSucces
   const emailValid = /^\S+@\S+\.\S+$/.test(form.email.trim());
 
   const googleSignIn = () => {
-    if (loading) return;
+    if (loading || !googleAgreed) return;
     setLoading(true);
     setErrors({});
     try { prepareGoogleSignIn(remember, bookingIntent); }
@@ -116,7 +122,7 @@ export default function Auth({ isOpen, defaultView = 'signin', onClose, onSucces
     if (form.phone && form.phone.replace(/\D/g, '').length < 10) next.phone = 'Enter a full mobile number or leave it blank.';
     if (form.password.length < 8) next.password = 'Use at least 8 characters.';
     if (form.password !== form.confirmPassword) next.confirmPassword = 'Passwords do not match.';
-    if (!agreed) next.agreed = 'Please agree to the Terms and Data Privacy Notice.';
+    if (!agreed) next.agreed = 'Please agree to the Terms and acknowledge the Data Privacy Notice.';
     setErrors(next);
     if (Object.keys(next).length || loading) return;
 
@@ -200,7 +206,8 @@ export default function Auth({ isOpen, defaultView = 'signin', onClose, onSucces
         {errors.general && <div className="notice notice-danger" role="alert"><p>{errors.general}</p></div>}
 
         {(stage === 'signin' || stage === 'signup') && <div className="google-auth-options">
-          <button type="button" className="google-signin-button" disabled={loading} onClick={googleSignIn}>
+          <PrivacyHighlight compact onRead={() => setPolicy('privacy')} />
+          <button type="button" className="google-signin-button" disabled={loading} onClick={() => { setGoogleAgreed(false); setGoogleReview(true); }}>
             <svg width="20" height="20" viewBox="0 0 48 48" aria-hidden="true">
               <path fill="#EA4335" d="M24 9.5c3.54 0 6.71 1.22 9.21 3.6l6.85-6.85C35.9 2.38 30.47 0 24 0 14.62 0 6.51 5.38 2.56 13.22l7.98 6.19C12.43 13.72 17.74 9.5 24 9.5Z" />
               <path fill="#4285F4" d="M46.98 24.55c0-1.57-.15-3.09-.38-4.55H24v9.02h12.94c-.58 2.96-2.26 5.48-4.78 7.18l7.73 6C44.4 38.04 46.98 31.89 46.98 24.55Z" />
@@ -209,7 +216,7 @@ export default function Auth({ isOpen, defaultView = 'signin', onClose, onSucces
             </svg>
             {loading ? 'Please wait…' : 'Continue with Google'}
           </button>
-          <p className="google-auth-notice">Sign in or create an account. By continuing with Google, you agree to our <button type="button" className="btn-link" onClick={() => setPolicy('terms')}>Terms</button> and <button type="button" className="btn-link" onClick={() => setPolicy('privacy')}>Data Privacy Notice</button>.</p>
+          <p className="google-auth-notice">Sign in or create an account using Google’s own screen. We request only your basic profile and email.</p>
           <label className="checkbox"><input type="checkbox" checked={remember} onChange={(event) => setRemember(event.target.checked)} /><span>Keep me signed in on this device</span></label>
           <div className="auth-divider"><span>or use your email</span></div>
         </div>}
@@ -266,14 +273,15 @@ export default function Auth({ isOpen, defaultView = 'signin', onClose, onSucces
             </div>
             <PasswordField id="auth-new-password" label="Password" value={form.password} onChange={set('password')} autoComplete="new-password" error={errors.password} hint="At least 8 characters." />
             <PasswordField id="auth-confirm-password" label="Confirm password" value={form.confirmPassword} onChange={set('confirmPassword')} autoComplete="new-password" error={errors.confirmPassword} />
-            <label className="checkbox checkbox-block">
-              <input type="checkbox" checked={agreed} onChange={(event) => { setAgreed(event.target.checked); setErrors((current) => ({ ...current, agreed: '' })); }} />
+            <label className="checkbox checkbox-block agreement-box">
+              <input type="checkbox" aria-describedby="signup-agreement-help" aria-invalid={Boolean(errors.agreed)} checked={agreed} onChange={(event) => { setAgreed(event.target.checked); setErrors((current) => ({ ...current, agreed: '' })); }} />
               <span>
                 I agree to the{' '}
-                <button type="button" className="btn-link" onClick={() => setPolicy('terms')}>Terms and Conditions</button> and the{' '}
-                <button type="button" className="btn-link" onClick={() => setPolicy('privacy')}>Data Privacy Notice</button>.
+                <button type="button" className="btn-link" onClick={() => setPolicy('terms')}>Terms and Conditions</button> and acknowledge that I have read the{' '}
+                <button type="button" className="btn-link" onClick={() => setPolicy('privacy')}>Data Privacy Notice (RA 10173)</button>.
               </span>
             </label>
+            <p id="signup-agreement-help" className="agreement-help">For your account and booking services. This does not authorize marketing or public use of your photos.</p>
             {errors.agreed && <p className="field-error">{errors.agreed}</p>}
             <button type="submit" className="btn btn-primary btn-block" disabled={loading}>
               {submitLabel('Create account')}
@@ -307,11 +315,31 @@ export default function Auth({ isOpen, defaultView = 'signin', onClose, onSucces
       </Modal>
 
       <Modal
+        open={googleReview}
+        onClose={() => setGoogleReview(false)}
+        size="sm"
+        title="Before you continue with Google"
+        description="Review how your account and information will be handled."
+        dismissible={!loading}
+        footer={<><button type="button" className="btn btn-ghost" disabled={loading} onClick={() => setGoogleReview(false)}>Cancel</button><button type="button" className="btn btn-primary" disabled={!googleAgreed || loading} onClick={googleSignIn}>{loading ? 'Please wait…' : 'Continue to Google'}</button></>}
+      >
+        <PrivacyHighlight compact onRead={() => setPolicy('privacy')} />
+        <label className="checkbox checkbox-block agreement-box">
+          <input type="checkbox" checked={googleAgreed} aria-describedby="google-agreement-help" onChange={(event) => setGoogleAgreed(event.target.checked)} />
+          <span>I agree to the <button type="button" className="btn-link" onClick={() => setPolicy('terms')}>Terms and Conditions</button> and acknowledge that I have read the <button type="button" className="btn-link" onClick={() => setPolicy('privacy')}>Data Privacy Notice (RA 10173)</button>.</span>
+        </label>
+        <p id="google-agreement-help" className="agreement-help">This does not authorize marketing or public use of your photos. Google sign-in shares your basic profile and email; it does not give us your Google password or access to your messages.</p>
+        {errors.general && <p className="field-error" role="alert">{errors.general}</p>}
+      </Modal>
+
+      <Modal
         open={policy !== null}
         onClose={() => setPolicy(null)}
-        size="md"
+        size="lg"
+        className="policy-modal"
+        description={`Updated November 16, 2026 · Version ${POLICY_VERSION}`}
         title={policy === 'terms' ? 'Terms and Conditions' : 'Data Privacy Notice'}
-        footer={<button type="button" className="btn btn-primary" onClick={() => setPolicy(null)}>Close</button>}
+        footer={<><a className="btn btn-ghost" href={policy === 'terms' ? '/terms' : '/privacy'} target="_blank" rel="noopener noreferrer">Open full page<span className="sr-only"> (opens in a new tab)</span></a><button type="button" className="btn btn-primary" onClick={() => setPolicy(null)}>Close notice</button></>}
       >
         {policy && <PolicyContent type={policy} />}
       </Modal>
