@@ -50,7 +50,7 @@ export async function handleAuthMail(req:Request,config:{secret:string;key:strin
    if(role!=='customer')return fail(403,'Password recovery is unavailable.');
   }
   const messages=authMessages(verified.event);
-  const responses=await Promise.all(messages.map((message,i)=>deps.fetcher('https://api.resend.com/emails',{method:'POST',headers:{Authorization:`Bearer ${config.key}`,'Content-Type':'application/json','Idempotency-Key':`auth-hook:${verified.id}:${i}`},body:JSON.stringify({from:config.from,reply_to:'tutokpitikstudios@gmail.com',...message}),signal:AbortSignal.timeout(3500)})));
+  const responses=await Promise.all(messages.map((message,i)=>deps.fetcher('https://api.resend.com/emails',{method:'POST',headers:{Authorization:`Bearer ${config.key}`,'Content-Type':'application/json','Idempotency-Key':`auth-hook:${verified.id}:${i}`},body:JSON.stringify({from:config.from,reply_to:'tutokpitikstudios@gmail.com',...message}),signal:AbortSignal.timeout(2000)})));
   if(responses.some(r=>!r.ok))return fail(503,'Email service unavailable');
   return Response.json({});
  }catch{return fail(503,'Email service unavailable');}
