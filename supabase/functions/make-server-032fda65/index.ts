@@ -5,6 +5,8 @@ import * as kv from "./kv_store.tsx";
 import { createClient } from "npm:@supabase/supabase-js";
 import { accountContent, STUDIO_EMAIL } from "../_shared/email.ts";
 
+import { hasPortalSession } from "../_shared/admin-session.ts";
+
 const app = new Hono();
 
 const supabase = createClient(
@@ -148,6 +150,8 @@ async function requireAuthenticatedProfile(c: any) {
   if (!profile || (profile.status ?? 'active') !== 'active') {
     return null;
   }
+
+  if (['superadmin','super_admin','admin','staff'].includes(profile.role) && !(await hasPortalSession(supabase,auth.accessToken,auth.user.id))) return null;
 
   return {
     ...auth,
@@ -503,6 +507,7 @@ app.delete("/make-server-032fda65/bookings/:id", async (c) => {
       return c.json({ error: 'Unauthorized' }, 401);
     }
 
+    if (!contentAdminRoles.includes(auth.profile.role)) return c.json({error:'Forbidden'},403);
     const bookingId = c.req.param('id');
     const { data: booking, error: bookingError } = await supabase
       .from('bookings')
@@ -681,7 +686,7 @@ app.post("/make-server-032fda65/portfolio", async (c) => {
       return c.json({ error: 'Unauthorized' }, 401);
     }
 
-    if (!adminRoles.includes(auth.profile.role)) {
+    if (!contentAdminRoles.includes(auth.profile.role)) {
       return c.json({ error: 'Forbidden - Admin access required' }, 403);
     }
 
@@ -711,7 +716,7 @@ app.put("/make-server-032fda65/portfolio/:id", async (c) => {
       return c.json({ error: 'Unauthorized' }, 401);
     }
 
-    if (!adminRoles.includes(auth.profile.role)) {
+    if (!contentAdminRoles.includes(auth.profile.role)) {
       return c.json({ error: 'Forbidden - Admin access required' }, 403);
     }
 
@@ -746,7 +751,7 @@ app.delete("/make-server-032fda65/portfolio/:id", async (c) => {
       return c.json({ error: 'Unauthorized' }, 401);
     }
 
-    if (!adminRoles.includes(auth.profile.role)) {
+    if (!contentAdminRoles.includes(auth.profile.role)) {
       return c.json({ error: 'Forbidden - Admin access required' }, 403);
     }
 
@@ -859,6 +864,9 @@ app.post("/make-server-032fda65/users", async (c) => {
       return c.json({ error: 'Email, password, and full name are required' }, 400);
     }
 
+    if (role && !['customer','staff','admin','superadmin'].includes(role)) return c.json({error:'Invalid role'},400);
+    if (status && !['active','inactive','suspended'].includes(status)) return c.json({error:'Invalid status'},400);
+
     const { data: createdAuthUser, error: createError } = await supabase.auth.admin.createUser({
       email,
       password,
@@ -938,6 +946,10 @@ app.put("/make-server-032fda65/users/:id", async (c) => {
 
     const targetUserId = c.req.param('id');
     const updates = await c.req.json();
+
+    if (updates.role !== undefined && !['customer','staff','admin','superadmin'].includes(updates.role)) return c.json({error:'Invalid role'},400);
+    if (updates.status !== undefined && !['active','inactive','suspended'].includes(updates.status)) return c.json({error:'Invalid status'},400);
+    if (targetUserId === auth.user.id && ((updates.role && updates.role !== 'superadmin') || (updates.status && updates.status !== 'active'))) return c.json({error:'You cannot remove your own superadmin access'},400);
 
     const dbUpdates: Record<string, unknown> = {
       updated_at: new Date().toISOString(),

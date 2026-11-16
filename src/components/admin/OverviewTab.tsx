@@ -1,12 +1,16 @@
 import { useMemo, useState, type ReactNode } from 'react';
-import { CalendarCheck, Hourglass, LoaderCircle, RefreshCw, UserPlus, Wallet } from 'lucide-react';
+import { CalendarCheck, Hourglass, LoaderCircle, RefreshCw, UserPlus, Wallet, ArrowUpRight, Camera } from 'lucide-react';
 import { statusLabel, statusTone, type NormalizedBooking } from '../../lib/bookings';
 import { formatDateShort, formatPeso, formatTime } from '../../lib/format';
 import { SERVICES } from '../../content/site';
 import { addDaysKey, todayKey, type AdminUser } from './shared';
+import type { SessionUser } from '../../lib/session';
+import type { AdminTabId } from './shared';
 import type { LoadState } from './AdminDashboard';
 
 interface OverviewTabProps {
+  user: SessionUser;
+  onNavigate: (tab: AdminTabId) => void;
   bookings: NormalizedBooking[];
   bookingsState: LoadState;
   users: AdminUser[];
@@ -18,14 +22,14 @@ const MONTHS_SHOWN = 6;
 
 const monthKey = (date: Date) => `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}`;
 
-export default function OverviewTab({ bookings, bookingsState, users, onOpenBooking, onRefresh }: OverviewTabProps) {
+export default function OverviewTab({ user, onNavigate, bookings, bookingsState, users, onOpenBooking, onRefresh }: OverviewTabProps) {
   const today = todayKey();
   const in30 = addDaysKey(30);
 
   const stats = useMemo(() => {
     const live = bookings.filter((booking) => booking.status !== 'cancelled');
     const completed = bookings.filter((booking) => booking.status === 'completed');
-    const revenue = completed.reduce((sum, booking) => sum + booking.totalAmount, 0);
+    const revenue = live.filter(b => b.paymentStatus === 'verified').reduce((sum,b)=>sum+b.downpaymentAmount,0);
     const pending = bookings.filter((booking) => booking.status === 'pending');
     const upcoming = bookings
       .filter((booking) => booking.status === 'confirmed' && booking.date >= today && booking.date <= in30)
@@ -35,7 +39,7 @@ export default function OverviewTab({ bookings, bookingsState, users, onOpenBook
       .reduce((sum, booking) => sum + booking.totalAmount, 0);
     const thisMonth = monthKey(new Date());
     const newCustomers = users.filter((user) => user.role === 'customer' && (user.joinDate || '').startsWith(thisMonth)).length;
-    const customers = users.filter((user) => user.role === 'customer').length;
+    const customers = new Set(live.map(b=>b.userId||b.email)).size;
     return { live, completed, revenue, pending, upcoming, bookedValue, newCustomers, customers };
   }, [bookings, users, today, in30]);
 
@@ -85,8 +89,8 @@ export default function OverviewTab({ bookings, bookingsState, users, onOpenBook
     <section className="admin-section" aria-labelledby="overview-title">
       <header className="admin-head">
         <div>
-          <h1 id="overview-title">Overview</h1>
-          <p>How the studio is doing, and what needs your attention.</p>
+          <p className="studio-eyebrow">YOUR STUDIO, AT A GLANCE</p><h1 id="overview-title">Welcome back, {user.fullName.split(' ')[0]}.</h1>
+          <p>Here’s what’s happening at Tutok Pitik Studios today.</p>
         </div>
         <div className="admin-head-actions">
           <button type="button" className="btn btn-ghost btn-sm" onClick={onRefresh}>
@@ -99,11 +103,12 @@ export default function OverviewTab({ bookings, bookingsState, users, onOpenBook
         <div className="notice notice-danger">Bookings could not be loaded. Check your connection, then refresh.</div>
       )}
 
+      <div className="studio-overview-banner"><div><span className="studio-eyebrow">MAKE ROOM FOR THE NEXT MOMENT</span><h2>{stats.pending.length ? `${stats.pending.length} ${stats.pending.length===1?'booking needs':'bookings need'} your attention.` : 'Your next great shoot starts here.'}</h2><p>Keep every session on track, from first request to final gallery.</p><button className="btn btn-primary" onClick={()=>onNavigate('bookings')}>Manage bookings <ArrowUpRight size={17}/></button></div><Camera size={100} strokeWidth={0.7}/></div>
       <div className="kpi-grid">
         <Kpi icon={<Hourglass size={18} />} label="Needs review" value={String(stats.pending.length)} hint="Pending bookings with a payment to check" tone={stats.pending.length ? 'warning' : undefined} />
-        <Kpi icon={<CalendarCheck size={18} />} label="Shoots in the next 30 days" value={String(stats.upcoming.length)} hint={`${formatPeso(stats.bookedValue)} in confirmed bookings ahead`} />
-        <Kpi icon={<Wallet size={18} />} label="Revenue from completed shoots" value={formatPeso(stats.revenue)} hint={`${stats.completed.length} completed ${stats.completed.length === 1 ? 'booking' : 'bookings'}`} />
-        <Kpi icon={<UserPlus size={18} />} label="Customers" value={String(stats.customers)} hint={`${stats.newCustomers} joined this month`} />
+        <Kpi icon={<CalendarCheck size={18} />} label="Shoots in the next 30 days" value={String(stats.upcoming.length)} hint="Confirmed sessions on the calendar" />
+        {user.role!=='staff'?<Kpi icon={<Wallet size={18} />} label="Verified downpayments" value={formatPeso(stats.revenue)} hint="Recorded as verified · excludes cancellations" />:<Kpi icon={<Camera size={18}/>} label="Completed sessions" value={String(stats.completed.length)} hint="Shoots marked as completed"/>}
+        <Kpi icon={<UserPlus size={18} />} label="Booked clients" value={String(stats.customers)} hint="Unique clients with active or completed bookings" />
       </div>
 
       <div className="admin-grid-2">
@@ -112,7 +117,7 @@ export default function OverviewTab({ bookings, bookingsState, users, onOpenBook
             <h2>Booking requests per month</h2>
             <span>Last {MONTHS_SHOWN} months · excludes cancelled</span>
           </div>
-          <MonthlyBars data={monthly} />
+          <MonthlyBars data={monthly} showValue={user.role!=='staff'} />
         </div>
 
         <div className="admin-card">
@@ -190,7 +195,7 @@ interface MonthDatum {
   value: number;
 }
 
-function MonthlyBars({ data }: { data: MonthDatum[] }) {
+function MonthlyBars({ data, showValue }: { data: MonthDatum[]; showValue: boolean }) {
   const [hover, setHover] = useState<number | null>(null);
   const max = Math.max(4, ...data.map((entry) => entry.count));
   const step = max <= 8 ? 2 : max <= 20 ? 5 : 10;
@@ -246,7 +251,7 @@ function MonthlyBars({ data }: { data: MonthDatum[] }) {
                 onFocus={() => setHover(index)}
                 onBlur={() => setHover(null)}
                 tabIndex={0}
-                aria-label={`${entry.long}: ${entry.count} bookings, ${formatPeso(entry.value)}`}
+                aria-label={`${entry.long}: ${entry.count} bookings`}
               />
             </g>
           );
@@ -258,7 +263,7 @@ function MonthlyBars({ data }: { data: MonthDatum[] }) {
           <span>
             {active.count} {active.count === 1 ? 'booking' : 'bookings'}
           </span>
-          <span>{formatPeso(active.value)} booked</span>
+          {showValue&&<span>{formatPeso(active.value)} booked</span>}
         </div>
       )}
       <table className="sr-only">
@@ -267,7 +272,7 @@ function MonthlyBars({ data }: { data: MonthDatum[] }) {
           <tr>
             <th>Month</th>
             <th>Bookings</th>
-            <th>Value</th>
+            {showValue&&<th>Booked value</th>}
           </tr>
         </thead>
         <tbody>
@@ -275,7 +280,7 @@ function MonthlyBars({ data }: { data: MonthDatum[] }) {
             <tr key={entry.key}>
               <td>{entry.long}</td>
               <td>{entry.count}</td>
-              <td>{formatPeso(entry.value)}</td>
+              {showValue&&<td>{formatPeso(entry.value)}</td>}
             </tr>
           ))}
         </tbody>

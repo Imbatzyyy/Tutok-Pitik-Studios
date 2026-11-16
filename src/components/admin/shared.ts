@@ -12,10 +12,14 @@ import type { SessionUser } from '../../lib/session';
 import { supabase } from '../../lib/supabase';
 
 export type AdminRole = SessionUser['role'];
-export type AdminTabId = 'overview' | 'bookings' | 'users' | 'portfolio' | 'availability' | 'reviews';
+export type AdminTabId = 'overview' | 'bookings' | 'users' | 'portfolio' | 'availability' | 'reviews' | 'payments' | 'customers' | 'activity' | 'inbox';
 
 export const TAB_ROLES: Record<AdminTabId, AdminRole[]> = {
-  overview: ['superadmin'],
+  overview: ['superadmin', 'admin', 'staff'],
+  payments: ['superadmin', 'admin'],
+  customers: ['superadmin', 'admin'],
+  activity: ['superadmin', 'admin', 'staff'],
+  inbox: ['superadmin', 'admin'],
   bookings: ['superadmin', 'admin', 'staff'],
   users: ['superadmin'],
   portfolio: ['superadmin', 'admin'],
@@ -46,7 +50,7 @@ export interface AdminUser {
   username: string;
   phone: string;
   role: string;
-  status: 'active' | 'inactive';
+  status: 'active' | 'inactive' | 'suspended';
   profilePicture: string;
   joinDate: string;
 }
@@ -59,7 +63,7 @@ export const normalizeUser = (record: any): AdminUser => ({
   username: record.username || '',
   phone: record.phone || '',
   role: record.role === 'super_admin' ? 'superadmin' : record.role || 'customer',
-  status: record.status === 'inactive' ? 'inactive' : 'active',
+  status: ['inactive','suspended'].includes(record.status) ? record.status : 'active',
   profilePicture: record.profile_picture_url || record.profilePicture || '',
   joinDate: record.created_at || record.joinDate || '',
 });
@@ -122,15 +126,10 @@ export async function saveBooking(booking: NormalizedBooking, changes: BookingCh
   return normalizeBooking(data);
 }
 
-export const todayKey = () => {
-  const now = new Date();
-  return `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-${String(now.getDate()).padStart(2, '0')}`;
-};
-
+export const todayKey = () => new Intl.DateTimeFormat('en-CA',{timeZone:'Asia/Manila',year:'numeric',month:'2-digit',day:'2-digit'}).format(new Date());
 export const addDaysKey = (days: number) => {
-  const date = new Date();
-  date.setDate(date.getDate() + days);
-  return `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}-${String(date.getDate()).padStart(2, '0')}`;
+  const date=new Date(`${todayKey()}T12:00:00+08:00`);date.setUTCDate(date.getUTCDate()+days);
+  return new Intl.DateTimeFormat('en-CA',{timeZone:'Asia/Manila',year:'numeric',month:'2-digit',day:'2-digit'}).format(date);
 };
 
 export const includesText = (haystack: (string | undefined | null)[], needle: string) => {

@@ -1,6 +1,7 @@
 import { createClient } from '@supabase/supabase-js';
 
-const REMEMBER_ME_KEY = 'tutok:remember_me';
+export const isAdminPortal = window.location.pathname === '/admin' || window.location.pathname.startsWith('/admin/');
+const REMEMBER_ME_KEY = isAdminPortal ? 'tutok:admin_remember_me' : 'tutok:remember_me';
 
 const getRememberPreference = () => {
   if (typeof window === 'undefined') return false;
@@ -14,7 +15,7 @@ if (!supabaseUrl || !supabaseAnonKey) {
 }
 const projectHost = new URL(supabaseUrl).hostname;
 export const projectId = projectHost.replace('.supabase.co', '');
-const AUTH_STORAGE_KEY_PREFIX = `sb-${projectId}-auth-token`;
+const AUTH_STORAGE_KEY_PREFIX = `sb-${projectId}-auth-token${isAdminPortal ? '-admin' : ''}`;
 
 // Google is only used to establish identity. Do not retain Google API tokens.
 export const stripProviderTokens = (key: string, value: string) => {
@@ -35,7 +36,7 @@ const migrateSupabaseSessionStorage = (remember: boolean) => {
 
   for (let index = 0; index < source.length; index += 1) {
     const key = source.key(index);
-    if (!key || !key.startsWith(AUTH_STORAGE_KEY_PREFIX)) continue;
+    if (!key || !(key === AUTH_STORAGE_KEY_PREFIX || key === `${AUTH_STORAGE_KEY_PREFIX}-code-verifier`)) continue;
     const value = source.getItem(key);
     if (value !== null) {
       target.setItem(key, value);
@@ -86,10 +87,11 @@ const isGoogleRoute = ['/auth/google', '/auth/callback'].includes(window.locatio
 export const supabase = createClient(supabaseUrl, supabaseAnonKey, {
   global: demoFetch ? { fetch: demoFetch } : undefined,
   auth: {
+    storageKey: AUTH_STORAGE_KEY_PREFIX,
     persistSession: true,
     autoRefreshToken: true,
     flowType: isGoogleRoute ? 'pkce' : 'implicit',
-    detectSessionInUrl: !isGoogleRoute,
+    detectSessionInUrl: !isGoogleRoute && !isAdminPortal,
     storage: authStorage,
   },
 });

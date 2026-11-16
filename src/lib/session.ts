@@ -96,7 +96,7 @@ export async function resolveSessionUser(authUser: any) {
   const profile = await fetchProfile(authUser.id);
   if (profile && profile.status != null && profile.status !== 'active') {
     try {
-      await supabase.auth.signOut();
+      await supabase.auth.signOut({ scope: 'local' });
     } catch {
       /* already signed out */
     }
@@ -104,4 +104,16 @@ export async function resolveSessionUser(authUser: any) {
   }
   if (!profile) throw new Error('We could not load your account securely. Please try signing in again.');
   return { ...userFromProfile(profile, authUser), profilePicture: await resolveAvatarUrl(profile.profile_picture_url) };
+}
+
+export const CUSTOMER_SIGNIN_ERROR = 'Unable to sign in with these details.';
+export const isTeamRole = (role: string) => ['superadmin', 'super_admin', 'admin', 'staff'].includes(role);
+/** Customer sign-in must never expose a team role or enable a dashboard. */
+export async function resolveCustomerSession(authUser: any) {
+  const user = await resolveSessionUser(authUser);
+  if (user.role !== 'customer') {
+    await supabase.auth.signOut({ scope: 'local' }).catch(() => undefined);
+    throw new Error(CUSTOMER_SIGNIN_ERROR);
+  }
+  return user;
 }

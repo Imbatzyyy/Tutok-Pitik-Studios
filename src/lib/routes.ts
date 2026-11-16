@@ -4,7 +4,7 @@ import type { ProfileTab } from '../components/UserProfile';
 // Kept free of component imports so the lazy profile and admin bundles stay lazy.
 
 export const PROFILE_TABS: ProfileTab[] = ['bookings', 'favorites', 'account'];
-export const ADMIN_TABS = ['overview', 'bookings', 'users', 'portfolio', 'availability', 'reviews'];
+export const ADMIN_TABS = ['overview', 'bookings', 'users', 'portfolio', 'availability', 'reviews', 'payments', 'customers', 'activity', 'inbox'];
 
 export type SiteRoute =
   | { view: 'home' }

@@ -1,5 +1,5 @@
 import { supabase, setRememberMePreference } from './supabase';
-import { resolveSessionUser } from './session';
+import { resolveCustomerSession } from './session';
 
 export const GOOGLE_START_PATH = '/auth/google';
 export const GOOGLE_CALLBACK_PATH = '/auth/callback';
@@ -71,6 +71,6 @@ export async function finishGoogleSignIn() {
   if (error || !data.session || !data.user) {
     throw new Error('This sign-in link could not be verified. Please start Google sign-in again in this browser.');
   }
-  await resolveSessionUser(data.user);
+  await resolveCustomerSession(data.user);
   return attempt.returnTo;
 }

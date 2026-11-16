@@ -20,7 +20,7 @@ function harness({href='https://tutokpitikstudios.com/auth/callback?code=one-use
  const exports={};
  vm.runInNewContext(compiled,{exports,URL,URLSearchParams,Date,sessionStorage:storage,window:{location:{origin:'https://tutokpitikstudios.com',href,assign:p=>events.push(['navigate',p])},history:{replaceState:(_a,_b,p)=>events.push(['clean',p])}},require:id=>{
   if(id==='./supabase')return {supabase:{auth},setRememberMePreference:v=>events.push(['remember',v])};
-  if(id==='./session')return {resolveSessionUser:async u=>{events.push(['profile',u.id]);if(profileError)throw new Error('Account unavailable');return u;}};
+  if(id==='./session')return {resolveCustomerSession:async u=>{events.push(['profile',u.id]);if(profileError)throw new Error('Account unavailable');return u;}};
   throw new Error('Unexpected module');
  }});
  return {api:exports,storage,events,attempt:(returnTo='/#contact',startedAt=Date.now())=>storage.setItem('tps:google-signin',JSON.stringify({startedAt,returnTo}))};
@@ -65,12 +65,22 @@ for(const options of [{exchangeError:true},{profileError:true}]){
 // Exercise actual storage configuration on all routes, including legacy recovery.
 const storageSource=fs.readFileSync('src/lib/supabase.ts','utf8').replaceAll('import.meta.env.VITE_SUPABASE_URL',JSON.stringify('https://example.supabase.co')).replaceAll('import.meta.env.VITE_SUPABASE_ANON_KEY',JSON.stringify('public-fixture-key')).replaceAll("import.meta.env.VITE_DEMO_MODE === 'true'",'false').replace("(await import('./demo')).createDemoFetch(supabaseUrl)",'undefined');
 const storageCompiled=ts.transpileModule(storageSource,{compilerOptions:{module:ts.ModuleKind.CommonJS,target:ts.ScriptTarget.ES2022}}).outputText;
-for(const pathname of ['/','/reset-password','/auth/google','/auth/callback']){
+for(const pathname of ['/','/reset-password','/auth/google','/auth/callback','/admin','/admin/login','/admin/bookings']){
  const localStorage=makeStorage(),sessionStorage=makeStorage();let config;
  vm.runInNewContext(storageCompiled,{exports:{},URL,fetch(){throw new Error('No network');},window:{location:{pathname},localStorage,sessionStorage},require:id=>({createClient:(_url,_key,c)=>{config=c;return {};}})});
- const google=pathname.startsWith('/auth/');assert.equal(config.auth.flowType,google?'pkce':'implicit');assert.equal(config.auth.detectSessionInUrl,!google);
- config.auth.storage.setItem('sb-example-auth-token',JSON.stringify({access_token:'studio-session',provider_token:'do-not-retain',provider_refresh_token:'do-not-retain'}));
- const saved=JSON.parse(sessionStorage.getItem('sb-example-auth-token'));assert.equal(saved.access_token,'studio-session');assert.equal(saved.provider_token,undefined);assert.equal(saved.provider_refresh_token,undefined);assert.equal(localStorage.getItem('sb-example-auth-token'),null);
+ const google=pathname.startsWith('/auth/');assert.equal(config.auth.flowType,google?'pkce':'implicit');const admin=pathname.startsWith('/admin');assert.equal(config.auth.detectSessionInUrl,!google&&!admin);assert.equal(config.auth.storageKey,`sb-example-auth-token${admin?'-admin':''}`);
+ config.auth.storage.setItem(config.auth.storageKey,JSON.stringify({access_token:'studio-session',provider_token:'do-not-retain',provider_refresh_token:'do-not-retain'}));
+ const saved=JSON.parse(sessionStorage.getItem(config.auth.storageKey));assert.equal(saved.access_token,'studio-session');assert.equal(saved.provider_token,undefined);assert.equal(saved.provider_refresh_token,undefined);assert.equal(localStorage.getItem('sb-example-auth-token'),null);
  config.auth.storage.setItem('sb-example-auth-token-code-verifier','verifier');assert.equal(config.auth.storage.getItem('sb-example-auth-token-code-verifier'),'verifier');checks++;
 }
 console.log(`PASS: ${checks} Google-auth security and lifecycle checks; no live credentials or network.`);
+
+// Sessions from the other entry point must never be migrated or overwritten.
+for (const pathname of ['/', '/admin/login']) {
+ const localStorage=makeStorage(),sessionStorage=makeStorage();let config;const api={};
+ const other=pathname==='/'?'sb-example-auth-token-admin':'sb-example-auth-token';
+ localStorage.setItem(other,'other-portal-session');
+ vm.runInNewContext(storageCompiled,{exports:api,URL,fetch(){throw new Error('No network');},window:{location:{pathname},localStorage,sessionStorage},require:id=>({createClient:(_url,_key,c)=>{config=c;return {};}})});
+ api.setRememberMePreference(false);assert.equal(localStorage.getItem(other),'other-portal-session');assert.equal(sessionStorage.getItem(other),null);checks++;
+}
+console.log(`PASS: ${checks} auth lifecycle, customer/admin storage isolation and URL-token handling checks.`);

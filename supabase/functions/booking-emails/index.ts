@@ -1,3 +1,4 @@
+import { hasPortalSession } from "../_shared/admin-session.ts";
 import { createClient } from "npm:@supabase/supabase-js@2.110.7";
 import { drain } from "./core.ts";
 const db = createClient(
@@ -54,6 +55,7 @@ Deno.serve(async (req) => {
         .maybeSingle();
       if (!profile || profile.status !== "active")
         return reply(403, { error: "Active account required" });
+      if (["staff","admin","superadmin","super_admin"].includes(profile.role) && !(await hasPortalSession(db,token,user.id))) return reply(403,{error:"Studio sign-in required"});
       const raw = await req.text();
       if (raw.length > 1024) return reply(413, { error: "Request too large" });
       const body = JSON.parse(raw);

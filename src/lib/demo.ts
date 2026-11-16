@@ -226,11 +226,18 @@ export function createDemoFetch(supabaseUrl: string): typeof fetch {
 
     await new Promise((resolve) => setTimeout(resolve, 120));
 
+    if (url.pathname === '/.netlify/functions/admin-login') {
+      const account = db.accounts.find(entry => entry.email === body?.email && entry.password === body?.password);
+      if (!account || !['superadmin','admin','staff'].includes(roleOf(account))) return json({error:'Unable to sign in with these details.'},401);
+      return json(sessionFor(account));
+    }
     if (!url.href.startsWith(supabaseUrl)) {
       return fetch(input, init);
     }
     const path = url.pathname;
 
+    if (path === '/rest/v1/rpc/is_studio_team') return json(['superadmin','admin','staff'].includes(roleOf(currentAccount(headers))));
+    if (path === '/rest/v1/rpc/studio_end_admin_session') return json(null);
     // ---------------- Auth ----------------
     if (path.startsWith('/auth/v1/')) {
       const route = path.replace('/auth/v1/', '');

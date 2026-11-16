@@ -8,7 +8,7 @@ import { getRememberMePreference, setRememberMePreference, supabase } from '../l
 import { prepareGoogleSignIn } from '../lib/google-auth';
 import { PolicyContent, POLICY_VERSION } from './PolicyPage';
 import PrivacyHighlight from './PrivacyHighlight';
-import { resolveSessionUser, type SessionUser } from '../lib/session';
+import { resolveCustomerSession, type SessionUser } from '../lib/session';
 import { errorMessage } from '../lib/api';
 
 export type AuthView = 'signin' | 'signup' | 'forgot';
@@ -138,7 +138,7 @@ export default function Auth({ isOpen, defaultView = 'signin', onClose, onSucces
       setRememberMePreference(remember);
       const { data, error } = await supabase.auth.signInWithPassword({ email: form.email.trim(), password: form.password });
       if (error) throw error;
-      if (data.user) onSuccess(await resolveSessionUser(data.user));
+      if (data.user) onSuccess(await resolveCustomerSession(data.user));
       onClose();
     } catch (error) {
       setErrors({ general: friendlyAuthError(errorMessage(error)) });
@@ -179,7 +179,7 @@ export default function Auth({ isOpen, defaultView = 'signin', onClose, onSucces
       });
       if (error) throw error;
       if (data.session && data.user) {
-        onSuccess(await resolveSessionUser(data.user));
+        onSuccess(await resolveCustomerSession(data.user));
         onClose();
         return;
       }

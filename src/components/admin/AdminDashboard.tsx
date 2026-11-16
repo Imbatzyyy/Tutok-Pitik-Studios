@@ -1,6 +1,8 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
-import { CalendarDays, CalendarOff, ChartColumn, Images, LogOut, MessageSquareQuote, Users, X, type LucideIcon } from 'lucide-react';
+import { CalendarDays, CalendarOff, ChartColumn, Images, LogOut, MessageSquareQuote, Users, X, Menu, ArrowUpRight, RefreshCw, Wallet, Activity, Inbox, UserRound, type LucideIcon } from 'lucide-react';
 import { useModal } from '../../hooks/useModal';
+import logo from '../../assets/logo-160.png';
+import { PaymentsView, CustomersView, ActivityView, InboxView } from './StudioViews';
 import { normalizeBooking, type NormalizedBooking } from '../../lib/bookings';
 import { initials } from '../../lib/format';
 import type { SessionUser } from '../../lib/session';
@@ -29,10 +31,14 @@ interface AdminDashboardProps {
 const NAV: { id: AdminTabId; label: string; icon: LucideIcon }[] = [
   { id: 'overview', label: 'Overview', icon: ChartColumn },
   { id: 'bookings', label: 'Bookings', icon: CalendarDays },
-  { id: 'users', label: 'Users', icon: Users },
+  { id: 'payments', label: 'Payments', icon: Wallet },
+  { id: 'customers', label: 'Clients', icon: UserRound },
+  { id: 'users', label: 'Accounts & roles', icon: Users },
   { id: 'portfolio', label: 'Portfolio', icon: Images },
   { id: 'availability', label: 'Availability', icon: CalendarOff },
   { id: 'reviews', label: 'Testimonials', icon: MessageSquareQuote },
+  { id: 'inbox', label: 'Inquiries', icon: Inbox },
+  { id: 'activity', label: 'Activity', icon: Activity },
 ];
 
 export type LoadState = 'loading' | 'ready' | 'error';
@@ -50,7 +56,11 @@ export default function AdminDashboard({ user, onClose, onPortfolioUpdated, onLo
     onLocationChange?.(active, active === 'bookings' ? openBookingId || focusBookingId : null);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [active, openBookingId]);
-  const ref = useModal<HTMLDivElement>(true, undefined, { autoFocus: false });
+  const [menuOpen,setMenuOpen]=useState(false);
+  const menuRef=useModal<HTMLElement>(menuOpen,()=>setMenuOpen(false));
+  useEffect(()=>{const resize=()=>{if(window.innerWidth>960)setMenuOpen(false);};window.addEventListener('resize',resize);return()=>window.removeEventListener('resize',resize);},[]);
+  const [refreshing,setRefreshing]=useState(false);
+  const [updated,setUpdated]=useState<Date|null>(null);
 
   const [bookings, setBookings] = useState<NormalizedBooking[]>([]);
   const [bookingsState, setBookingsState] = useState<LoadState>('loading');
@@ -63,7 +73,7 @@ export default function AdminDashboard({ user, onClose, onPortfolioUpdated, onLo
   const loadBookings = useCallback(async () => {
     if (!needsBookings) return;
     setBookingsState((state) => (state === 'ready' ? state : 'loading'));
-    const { data, error } = await supabase.from('bookings').select('*').order('created_at', { ascending: false });
+    const { data, error } = await loadAll('bookings');
     if (error) {
       console.error('Could not load bookings:', error);
       setBookingsState('error');
@@ -71,12 +81,13 @@ export default function AdminDashboard({ user, onClose, onPortfolioUpdated, onLo
     }
     setBookings((data || []).map(normalizeBooking));
     setBookingsState('ready');
+    setUpdated(new Date());
   }, [needsBookings]);
 
   const loadUsers = useCallback(async () => {
     if (!needsUsers) return;
     setUsersState((state) => (state === 'ready' ? state : 'loading'));
-    const { data, error } = await supabase.from('users').select('*').order('created_at', { ascending: false });
+    const { data, error } = await loadAll('users');
     if (error) {
       console.error('Could not load users:', error);
       setUsersState('error');
@@ -104,22 +115,32 @@ export default function AdminDashboard({ user, onClose, onPortfolioUpdated, onLo
     setActive('bookings');
   };
 
+  const refresh = async () => { setRefreshing(true); try { await Promise.all([loadBookings(),loadUsers()]); } finally { setRefreshing(false); } };
+  useEffect(() => {
+    const timer=window.setInterval(()=>{if(!document.hidden)void loadBookings();},60_000);
+    const visible=()=>{if(!document.hidden)void loadBookings();};
+    document.addEventListener('visibilitychange',visible);
+    return()=>{clearInterval(timer);document.removeEventListener('visibilitychange',visible);};
+  },[loadBookings]);
   const pendingCount = bookings.filter((booking) => booking.status === 'pending').length;
 
   return (
-    <div className="admin-shell" ref={ref} role="dialog" aria-modal="true" aria-label="Studio dashboard">
-      <aside className="admin-sidebar">
+    <div className={`admin-shell studio-workspace ${menuOpen?'studio-menu-open':''}`}>
+      <a className="skip-link" href="#admin-main">Skip to workspace</a>
+      {menuOpen&&<button className="studio-nav-backdrop" aria-label="Close navigation" onClick={()=>setMenuOpen(false)}/>}
+      <aside ref={menuRef} className="admin-sidebar" aria-label="Studio navigation">
         <div className="admin-brand">
-          <span className="admin-brand-mark">TP</span>
+          <img className="studio-brand-logo" src={logo} alt=""/>
           <div>
-            <strong>Studio dashboard</strong>
-            <span>{ROLE_LABELS[user.role] || 'Team'}</span>
+            <strong>Tutok Pitik</strong>
+            <span>STUDIO WORKSPACE</span>
           </div>
-          <button type="button" className="icon-btn admin-close-mobile" onClick={onClose} aria-label="Close dashboard">
+          <button type="button" className="icon-btn admin-close-mobile" onClick={()=>setMenuOpen(false)} aria-label="Close navigation">
             <X size={20} />
           </button>
         </div>
 
+        <p className="studio-nav-label">WORKSPACE</p>
         <nav className="admin-nav" aria-label="Dashboard sections">
           {tabs.map(({ id, label, icon: Icon }) => (
             <button
@@ -127,7 +148,7 @@ export default function AdminDashboard({ user, onClose, onPortfolioUpdated, onLo
               type="button"
               className={active === id ? 'is-active' : ''}
               aria-current={active === id ? 'page' : undefined}
-              onClick={() => setActive(id)}
+              onClick={() => {setActive(id);setMenuOpen(false);setFocusBookingId(null);setOpenBookingId(null);}}
             >
               <Icon size={18} />
               <span>{label}</span>
@@ -147,11 +168,11 @@ export default function AdminDashboard({ user, onClose, onPortfolioUpdated, onLo
             </span>
             <div>
               <strong>{user.fullName}</strong>
-              <span>{user.email}</span>
+              <span>{ROLE_LABELS[user.role]}</span>
             </div>
           </div>
           <button type="button" className="btn btn-ghost btn-sm btn-block" onClick={onClose}>
-            <X size={16} /> Back to website
+            <ArrowUpRight size={16} /> View customer website
           </button>
           <button type="button" className="btn btn-ghost btn-sm btn-block admin-signout" onClick={onLogout}>
             <LogOut size={16} /> Sign out
@@ -159,9 +180,10 @@ export default function AdminDashboard({ user, onClose, onPortfolioUpdated, onLo
         </div>
       </aside>
 
-      <main className="admin-main" id="admin-main">
+      <div className="studio-workspace-body"><header className="studio-topbar"><div><button className="icon-btn studio-menu-toggle" aria-label="Open navigation" aria-expanded={menuOpen} onClick={()=>setMenuOpen(true)}><Menu size={21}/></button><span className="studio-breadcrumb">Workspace <span>/</span> <strong>{NAV.find(t=>t.id===active)?.label}</strong></span></div><div className="studio-topbar-actions"><span className="studio-sync"><i/>{bookingsState==='error'?'Refresh needed':updated?`Updated ${updated.toLocaleTimeString('en-PH',{hour:'numeric',minute:'2-digit',timeZone:'Asia/Manila'})}`:'Connecting…'}</span><button className="icon-btn" aria-label="Refresh data" disabled={refreshing} onClick={()=>void refresh()}><RefreshCw size={17} className={refreshing?'spin':''}/></button><span className="studio-role">{ROLE_LABELS[user.role]}</span><span className="avatar studio-topbar-avatar">{initials(user.fullName)}</span></div></header>
+      <main className="admin-main" id="admin-main" tabIndex={-1}>
         {active === 'overview' && (
-          <OverviewTab bookings={bookings} bookingsState={bookingsState} users={users} onOpenBooking={openBooking} onRefresh={loadBookings} />
+          <OverviewTab user={user} onNavigate={setActive} bookings={bookings} bookingsState={bookingsState} users={users} onOpenBooking={openBooking} onRefresh={loadBookings} />
         )}
         {active === 'bookings' && (
           <BookingsTab
@@ -176,11 +198,26 @@ export default function AdminDashboard({ user, onClose, onPortfolioUpdated, onLo
             onOpenChange={setOpenBookingId}
           />
         )}
+        {active === 'payments' && <PaymentsView bookings={bookings} onOpen={openBooking} state={bookingsState}/>}
+        {active === 'customers' && <CustomersView bookings={bookings} onOpen={openBooking} state={bookingsState}/>}
+        {active === 'activity' && <ActivityView onOpen={openBooking}/>}
+        {active === 'inbox' && <InboxView/>}
         {active === 'users' && <UsersTab currentUser={user} users={users} state={usersState} onReload={loadUsers} />}
         {active === 'portfolio' && <PortfolioTab user={user} onChanged={onPortfolioUpdated} />}
         {active === 'availability' && <AvailabilityTab bookings={bookings} />}
         {active === 'reviews' && <TestimonialsTab />}
-      </main>
+      </main><footer className="studio-workspace-footer"><span>Tutok Pitik Studios · Made for meaningful moments</span><span>Times shown in Manila · Bookings refresh every minute</span></footer></div>
     </div>
   );
+}
+
+// Page through all records rather than silently stopping at the API row limit.
+async function loadAll(table: 'bookings'|'users') {
+  const rows:any[]=[];
+  for(let page=0;page<100;page++){
+    const {data,error}=await supabase.from(table).select('*').order('created_at',{ascending:false}).order('id',{ascending:false}).range(page*500,(page+1)*500-1);
+    if(error)return {data:null,error};
+    rows.push(...(data||[]));if(!data||data.length<500)return {data:rows,error:null};
+  }
+  return {data:null,error:new Error('The dataset is too large to load safely.')};
 }

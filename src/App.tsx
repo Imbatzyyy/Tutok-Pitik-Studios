@@ -19,7 +19,7 @@ import { DEFAULT_PORTFOLIO, normalizePortfolioRow, type PortfolioItem } from './
 import { dayState, earliestBookableDate, useAvailability } from './lib/availability';
 import { toDateKey } from './lib/format';
 import { scrollToSection } from './lib/scroll';
-import { GUEST_USER, InactiveAccountError, resolveSessionUser, type SessionUser } from './lib/session';
+import { GUEST_USER, InactiveAccountError, resolveCustomerSession, type SessionUser } from './lib/session';
 import { isDemoMode, supabase } from './lib/supabase';
 import { clearBookingResume } from './lib/booking-resume';
 import { HOME, parseRoute, type SiteRoute } from './lib/routes';
@@ -27,14 +27,13 @@ import NotFound from './components/NotFound';
 
 const Auth = lazy(() => import('./components/Auth'));
 const UserProfile = lazy(() => import('./components/UserProfile'));
-const AdminDashboard = lazy(() => import('./components/admin/AdminDashboard'));
+const AdminPortal = lazy(() => import('./components/admin/AdminPortal'));
 const Lightbox = lazy(() => import('./components/Lightbox'));
 const SuccessModal = lazy(() => import('./components/SuccessModal'));
 const ResetPasswordPage = lazy(() => import('./components/ResetPasswordPage'));
 const GoogleAuthPage = lazy(() => import('./components/GoogleAuthPage'));
 const PolicyPage = lazy(() => import('./components/PolicyPage'));
 
-const TEAM_ROLES = ['superadmin', 'admin', 'staff'];
 
 function Site() {
   const [user, setUser] = useState<SessionUser>(GUEST_USER);
@@ -52,7 +51,7 @@ function Site() {
   const leaving = useRef(false);
   const afterLeave = useRef<(() => void) | null>(null);
 
-  // ---- Page addresses: /account/<tab> and /admin/<tab> open their overlays ----
+  // ---- Customer account overlays ----
 
   /** Open an overlay as its own history entry, so Back closes it. */
   const openView = useCallback((path: string) => {
@@ -132,7 +131,7 @@ function Site() {
     let cancelled = false;
     const apply = async (authUser: any) => {
       try {
-        const resolved = await resolveSessionUser(authUser);
+        const resolved = await resolveCustomerSession(authUser);
         if (!cancelled) setUser(resolved);
       } catch (error) {
         if (cancelled) return;
@@ -198,14 +197,14 @@ function Site() {
       return;
     }
     if (auth.intent === 'booking') clearBookingResume();
-    // Dismissed the sign-in that /account or /admin asked for: back to the page.
+    // Dismissed the sign-in that /account asked for: back to the page.
     if (routeRef.current.view !== 'home') leaveView();
   };
 
   const handleLogout = async () => {
     leaveView();
     try {
-      await supabase.auth.signOut();
+      await supabase.auth.signOut({ scope: 'local' });
     } catch {
       /* sign out locally anyway */
     }
@@ -213,18 +212,14 @@ function Site() {
     toast('Signed out');
   };
 
-  const isTeam = TEAM_ROLES.includes(user.role);
-
-  // /account and /admin need an account; /admin needs a studio team account.
+  // Customer account overlays require a customer session.
   useEffect(() => {
     if (!authReady || route.view === 'home') return;
     if (user.role === 'guest') {
       setAuth((current) => (current.open ? current : { open: true, view: 'signin' }));
-    } else if (route.view === 'admin' && !isTeam) {
-      toast.error('The dashboard is for the studio team', { id: 'admin-only' });
-      leaveView();
+
     }
-  }, [authReady, route.view, user.role, isTeam, leaveView]);
+  }, [authReady, route.view, user.role, leaveView]);
 
   return (
     <div className="App">
@@ -237,7 +232,6 @@ function Site() {
         user={user}
         onOpenAuth={() => openAuth('signin')}
         onOpenProfile={() => openView('/account')}
-        onOpenAdmin={isTeam ? () => openView('/admin') : undefined}
         onBook={() => goToBooking()}
       />
 
@@ -307,17 +301,7 @@ function Site() {
             onTabChange={(tab) => syncPath(`/account/${tab}`)}
           />
         )}
-        {route.view === 'admin' && isTeam && (
-          <AdminDashboard
-            user={user}
-            initialTab={route.tab}
-            initialBookingId={route.bookingId}
-            onClose={() => leaveView()}
-            onPortfolioUpdated={loadPortfolio}
-            onLogout={handleLogout}
-            onLocationChange={(tab, bookingId) => syncPath(bookingId ? `/admin/bookings/${encodeURIComponent(bookingId)}` : `/admin/${tab}`)}
-          />
-        )}
+
       </Suspense>
 
       <Toaster theme="dark" position="top-center" richColors closeButton toastOptions={{ duration: 4500 }} />
@@ -326,6 +310,9 @@ function Site() {
 }
 
 export default function App() {
+  if (window.location.pathname === '/admin' || window.location.pathname.startsWith('/admin/')) {
+    return <Suspense fallback={<main className="reset-page" role="status">Opening studio workspace…</main>}><AdminPortal /></Suspense>;
+  }
   if (['/auth/google', '/auth/callback'].includes(window.location.pathname)) {
     return <Suspense fallback={<main className="reset-page" role="status">Loading secure sign-in…</main>}><GoogleAuthPage /></Suspense>;
   }

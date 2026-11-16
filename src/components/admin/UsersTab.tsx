@@ -81,7 +81,7 @@ export default function UsersTab({ currentUser, users, state, onReload }: UsersT
     <section className="admin-section" aria-labelledby="users-title">
       <header className="admin-head">
         <div>
-          <h1 id="users-title">Users</h1>
+          <p className="studio-eyebrow">TEAM & ACCESS</p><h1 id="users-title">Accounts & roles</h1>
           <p>
             {counts.customer} customers · {counts.superadmin + counts.admin + counts.staff} team members
           </p>
@@ -99,6 +99,7 @@ export default function UsersTab({ currentUser, users, state, onReload }: UsersT
         </div>
       </header>
 
+      <div className="studio-role-guide"><p><strong>Super admin</strong><span>Full studio control, accounts and roles.</span></p><p><strong>Admin</strong><span>Bookings, payments, clients, content and availability.</span></p><p><strong>Staff</strong><span>Booking review, payment verification and photo delivery.</span></p></div>
       <div className="admin-filters">
         <div className="input-icon admin-search">
           <Search size={18} />
@@ -177,7 +178,7 @@ export default function UsersTab({ currentUser, users, state, onReload }: UsersT
                         <span className={`badge badge-plain badge-${ROLE_TONES[user.role] || 'neutral'}`}>{ROLE_LABELS[user.role] || user.role}</span>
                       </td>
                       <td data-label="Status">
-                        <span className={`badge badge-${user.status === 'active' ? 'success' : 'neutral'}`}>{user.status === 'active' ? 'Active' : 'Inactive'}</span>
+                        <span className={`badge badge-${user.status === 'active' ? 'success' : 'neutral'}`}>{user.status === 'active' ? 'Active' : user.status === 'suspended' ? 'Suspended' : 'Inactive'}</span>
                       </td>
                       <td data-label="Joined">{user.joinDate ? new Date(user.joinDate).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' }) : '—'}</td>
                       <td className="cell-actions">
@@ -380,7 +381,7 @@ function UserForm({ user, isSelf, onClose, onSaved }: UserFormProps) {
             <label htmlFor="uf-status">Status</label>
             <select id="uf-status" value={status} onChange={(event) => setStatus(event.target.value as AdminUser['status'])} disabled={isSelf}>
               <option value="active">Active</option>
-              <option value="inactive">Inactive</option>
+              <option value="inactive">Inactive</option><option value="suspended">Suspended</option>
             </select>
           </div>
         </div>

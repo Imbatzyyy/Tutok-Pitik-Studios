@@ -9,6 +9,9 @@ import { logger } from 'hono/logger';
 
 const emailModule = {};
 vm.runInNewContext(ts.transpileModule(readFileSync(new URL('../supabase/functions/_shared/email.ts', import.meta.url), 'utf8'), {compilerOptions:{module:ts.ModuleKind.CommonJS,target:ts.ScriptTarget.ES2022}}).outputText, {exports:emailModule});
+const portalModule={};
+vm.runInNewContext(ts.transpileModule(readFileSync(new URL('../supabase/functions/_shared/admin-session.ts',import.meta.url),'utf8'),{compilerOptions:{module:ts.ModuleKind.CommonJS,target:ts.ScriptTarget.ES2022}}).outputText,{exports:portalModule,atob});
+const token='fixture.'+Buffer.from(JSON.stringify({sub:'actor',session_id:'11111111-1111-4111-8111-111111111111'})).toString('base64url')+'.signature';
 const source = readFileSync(new URL('../supabase/functions/make-server-032fda65/index.ts', import.meta.url), 'utf8');
 const compiled = ts.transpileModule(source, {
   compilerOptions: { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2022, esModuleInterop: true },
@@ -21,10 +24,11 @@ const routes = [
   ['PUT', '/users/target', { fullName: 'Updated fixture', role: 'customer' }],
   ['DELETE', '/users/target'],
 ];
-function harness({ role = 'superadmin', status = 'active', missing = false, lookupError = false, invalid = false } = {}) {
+function harness({ role = 'superadmin', status = 'active', missing = false, lookupError = false, invalid = false, portal = true, portalError = false } = {}) {
   const events = [];
   const profile = { id: 'actor', role, status };
   const supabase = {
+    rpc:async (name,args)=>{assert.equal(name,"studio_admin_session_valid");assert.equal(args.p_user_id,"actor");return {data:portal,error:portalError?{message:"offline failure"}:null};},
     auth: {
       getUser: async () => {
         events.push('auth.lookup');
@@ -60,6 +64,7 @@ function harness({ role = 'superadmin', status = 'active', missing = false, look
     'npm:hono@4.13.17': { Hono }, 'npm:hono@4.13.17/cors': { cors }, 'npm:hono@4.13.17/logger': { logger },
     'npm:@supabase/supabase-js': { createClient: () => supabase },
     '../_shared/email.ts': emailModule,
+    '../_shared/admin-session.ts': portalModule,
     './kv_store.tsx': { del: async (key) => { events.push(`kv.delete:${key}`); } },
   };
   const context = vm.createContext({
@@ -76,7 +81,7 @@ function harness({ role = 'superadmin', status = 'active', missing = false, look
     events, profile,
     async request(method, path, body, authenticated = true) {
       const headers = new Headers();
-      if (authenticated) headers.set('Authorization', 'Bearer offline-token');
+      if (authenticated) headers.set('Authorization', `Bearer ${token}`);
       if (body) headers.set('Content-Type', 'application/json');
       const response = await handler(new Request(`http://offline.invalid/make-server-032fda65${path}`, {
         method, headers, ...(body ? { body: JSON.stringify(body) } : {}),
@@ -142,3 +147,20 @@ for (const route of ['/send-welcome-email','/send-profile-update-email']) {
  assert.deepEqual(h.events, []);
 }
 console.log('Legacy signup bypass is retired; unauthenticated account-email requests are blocked.');
+
+for(const role of ['superadmin','super_admin','admin','staff']){
+ for(const options of [{portal:false},{portalError:true}]){
+  const h=harness({role,...options});assert.equal((await h.request('GET','/users/all')).status,401);
+  assert.deepEqual(h.events,['auth.lookup','profile.lookup']);cases++;
+ }
+}
+for(const updates of [{role:'customer'},{status:'inactive'},{role:'owner'},{status:'unknown'}]){
+ const h=harness();assert.equal((await h.request('PUT','/users/actor',updates)).status,400);assert.deepEqual(h.events,['auth.lookup','profile.lookup']);cases++;
+}
+for(const method of ['POST','PUT','DELETE']){
+ const h=harness({role:'staff'});assert.equal((await h.request(method,method==='POST'?'/portfolio':'/portfolio/target',{})).status,403);cases++;
+}
+for(const badToken of ['', 'malformed', 'x.'+Buffer.from(JSON.stringify({sub:'other',session_id:'11111111-1111-4111-8111-111111111111'})).toString('base64url')+'.s']) {
+ assert.equal(await portalModule.hasPortalSession({rpc:()=>{throw new Error('Must not query');}},badToken,'actor'),false);cases++;
+}
+console.log(`PASS: ${cases} total edge authorization cases including portal binding, revocation errors, staff content restrictions and self-lockout.`);
