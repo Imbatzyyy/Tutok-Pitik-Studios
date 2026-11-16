@@ -76,6 +76,7 @@
     "test:edge-access": "node scripts/test-edge-access.mjs",
     "test:booking-emails": "node scripts/test-booking-emails.mjs",
     "email:templates": "node scripts/generate-email-templates.mjs",
-    "test:google-auth": "node scripts/test-google-auth.mjs"
+    "test:google-auth": "node scripts/test-google-auth.mjs",
+    "test:database-health": "node --test scripts/test-database-health.mjs"
   }
 }
