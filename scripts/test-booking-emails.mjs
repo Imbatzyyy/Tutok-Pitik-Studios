@@ -75,7 +75,7 @@ for (const kind of [
   "customer_requested",
   "studio_requested",
   "customer_confirmed",
-  "booking_cancelled", "request_received", "request_resolved", "booking_message", "payment_rejected", "gallery_ready", "shoot_reminder", "delivery_overdue",
+  "booking_cancelled", "request_received", "request_resolved", "booking_message", "payment_rejected", "gallery_ready", "shoot_reminder", "delivery_overdue", "owner_booking_unseen",
 ]) {
   const content = emailContent({ ...base, kind });
   assert(!content.html.includes("<script>"));
@@ -188,3 +188,19 @@ console.log('Branded account templates preserve secure provider links and escape
 
 for(const kind of ['request_received','delivery_overdue']){const job={...base,kind,recipient:'wrong@example.invalid',payload:{...base.payload,studio:true,notice:'<script>unsafe</script>'}};const content=emailContent(job);assert(content.html.includes('/admin/bookings/'));assert(content.html.includes('&lt;script&gt;unsafe'));assert(!content.html.includes('<script>'));await sendJob(job,config,fetcher);assert.deepEqual(requests.at(-1).body.to,['tutokpitikstudios@gmail.com']);}
 console.log('All workflow templates and server-selected studio recipients verified.');
+
+// Owner reminders select the official destination even when payload flags disagree.
+{
+ const job={...base,kind:'owner_booking_unseen',recipient:'attacker@example.invalid',payload:{...base.payload,studio:false,waiting_hours:2}};
+ const content=emailContent(job);assert(content.subject.includes('not been opened'));assert(content.html.includes('/admin/bookings/'));assert(content.text.includes('2 hours'));assert(!content.text.includes('Private note'));assert(!content.text.includes('09000000000'));assert(!content.text.includes('Customer email:'));
+ await sendJob(job,config,fetcher);assert.deepEqual(requests.at(-1).body.to,['tutokpitikstudios@gmail.com']);
+ for(const eligible of [true,false,null]) {
+  let calls=0;const updates=[];
+  const ownerDb={rpc:async(name,args)=>name==='claim_booking_emails'?{data:[job],error:null}:(assert.equal(name,'studio_prepare_owner_reminder'),assert.equal(args.p_job,job.id),{data:eligible,error:null}),from:()=>({update:patch=>({eq:()=>({eq:async()=>{updates.push(patch);return {error:null};}})})})};
+  const result=await drain(ownerDb,config,null,async(...args)=>{calls++;return fetcher(...args);});
+  assert.equal(calls,eligible===true?1:0);assert.equal(result.skipped,eligible===true?0:1);assert.equal(updates.length,eligible===true?1:0);
+ }
+ let sent=0;const ownerDb={...db,rpc:async name=>name==='claim_booking_emails'?{data:[job],error:null}:{data:null,error:{message:'private database diagnostic'}}};
+ const result=await drain(ownerDb,config,base.booking_id,async()=>{sent++;throw Error('must not send');});assert.equal(sent,0);assert.equal(result.failed,1);assert(!changes.at(-1).last_error.includes('private'));
+}
+console.log('Owner reminder recipient, private-content minimization and pre-send cancellation checks passed.');

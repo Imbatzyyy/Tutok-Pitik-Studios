@@ -16,6 +16,7 @@ const SETTINGS: [string, string, 'time' | 'number', string][] = [
   ['max_hours', 'Longest session', 'number', 'Hours.'],
   ['lead_days', 'Book at least', 'number', 'Days ahead of the shoot.'],
   ['delivery_days', 'Default gallery delivery', 'number', 'Days after the shoot.'],
+  ['owner_notice_hours', 'Owner email after', 'number', 'Hours a future pending booking may remain unopened. Emails go to tutokpitikstudios@gmail.com, at most once per 24 hours, until an admin opens it. Checks run every 15 minutes.'],
   ['review_hours', 'Pending review target', 'number', 'Hours before a pending booking is flagged as late.'],
 ];
 
@@ -141,7 +142,8 @@ export default function ScheduleView({ revision }: { revision: number }) {
                   {title}
                   <input
                     type={type}
-                    min={type === 'number' ? 0 : undefined}
+                    min={type === 'number' ? (key === 'owner_notice_hours' ? 1 : 0) : undefined}
+                    max={key === 'owner_notice_hours' ? 168 : undefined}
                     value={draft[key] ?? ''}
                     onChange={(e) => {
                       setDirty(true);

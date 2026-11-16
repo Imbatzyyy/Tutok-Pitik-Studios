@@ -12,16 +12,17 @@ const money = (value: unknown) =>
   );
 export function emailContent(job: any) {
   const b = job.payload;
-  const studio = job.kind === "studio_requested" || b.studio===true;
+  const ownerReminder = job.kind === "owner_booking_unseen";
+  const studio = ownerReminder || job.kind === "studio_requested" || b.studio===true;
   const confirmed = job.kind === "customer_confirmed";
   const reference = `TPS-${String(b.id).slice(0, 6).toUpperCase()}`;
-  const headings: Record<string,string>={booking_cancelled:"Your booking was cancelled",request_received:"A booking request needs review",request_resolved:"Your booking request was updated",booking_message:"You have a new booking message",payment_rejected:"Your payment proof needs attention",gallery_ready:"Your gallery is ready",shoot_reminder:"Your photography session is coming up",delivery_overdue:"A gallery delivery needs attention"};
+  const headings: Record<string,string>={owner_booking_unseen:"A booking has not been opened yet",booking_cancelled:"Your booking was cancelled",request_received:"A booking request needs review",request_resolved:"Your booking request was updated",booking_message:"You have a new booking message",payment_rejected:"Your payment proof needs attention",gallery_ready:"Your gallery is ready",shoot_reminder:"Your photography session is coming up",delivery_overdue:"A gallery delivery needs attention"};
   const heading = headings[job.kind] || (studio
     ? "New booking request"
     : confirmed
       ? "Your booking is confirmed"
       : "We received your booking request");
-  const messages:Record<string,string>={booking_cancelled:"This reservation is now cancelled. Open your booking for the decision and any refund request status.",request_received:"Review the requested change in the studio workspace. The existing reservation remains in place until an approved change is saved.",request_resolved:"Open your booking to see the studio response and your current schedule.",booking_message:"There is a new message about your booking. Sign in to read and reply securely.",payment_rejected:"The submitted proof could not be verified. Review the explanation below and submit corrected proof from your booking.",gallery_ready:"Your photographs are ready to view. Open your booking to access the gallery and share any revision request.",shoot_reminder:"Your session is within the next 24 hours. Review your schedule, venue and preparation details.",delivery_overdue:"The delivery due date has passed. Review the gallery progress and contact the client with an update."};
+  const messages:Record<string,string>={owner_booking_unseen:"No admin has opened this booking in the studio workspace. Please review the request. Opening it marks it as seen; it does not confirm the reservation or payment.",booking_cancelled:"This reservation is now cancelled. Open your booking for the decision and any refund request status.",request_received:"Review the requested change in the studio workspace. The existing reservation remains in place until an approved change is saved.",request_resolved:"Open your booking to see the studio response and your current schedule.",booking_message:"There is a new message about your booking. Sign in to read and reply securely.",payment_rejected:"The submitted proof could not be verified. Review the explanation below and submit corrected proof from your booking.",gallery_ready:"Your photographs are ready to view. Open your booking to access the gallery and share any revision request.",shoot_reminder:"Your session is within the next 24 hours. Review your schedule, venue and preparation details.",delivery_overdue:"The delivery due date has passed. Review the gallery progress and contact the client with an update."};
   const message = messages[job.kind] || (studio
     ? "A new booking is ready for review in your studio dashboard. Check the submitted GCash receipt before approving it."
     : confirmed
@@ -43,7 +44,11 @@ export function emailContent(job: any) {
   if (b.notice) rows.push(["Update",b.notice]);
   if (b.remaining_balance!==undefined)rows.push(["Outstanding balance",money(b.remaining_balance)]);
   if (b.delivery_due)rows.push(["Delivery due",b.delivery_due]);
-  if (studio)
+  if (ownerReminder) {
+    rows.splice(5); // Keep repeat alerts brief; private notes and contact details stay in the workspace.
+    if (b.waiting_hours !== undefined) rows.push(["Waiting for attention", `${b.waiting_hours} hours`]);
+  }
+  if (studio && !ownerReminder)
     rows.push(
       ["Customer email", b.email],
       ["Phone", b.phone],
@@ -86,7 +91,7 @@ export async function sendJob(
     },
     body: JSON.stringify({
       from: config.from,
-      to: [job.kind === "studio_requested" || job.payload.studio===true ? STUDIO_EMAIL : job.recipient],
+      to: [["studio_requested","owner_booking_unseen"].includes(job.kind) || job.payload.studio===true ? STUDIO_EMAIL : job.recipient],
       reply_to: STUDIO_EMAIL,
       ...content,
     }),
@@ -110,10 +115,15 @@ export async function drain(
   });
   if (error) throw new Error("Email queue unavailable");
   let sent = 0,
-    failed = 0;
+    failed = 0, skipped = 0;
   for (const job of jobs || []) {
     let result: any;
     try {
+      if (job.kind === 'owner_booking_unseen') {
+        const checked = await db.rpc('studio_prepare_owner_reminder', { p_job: job.id });
+        if (checked.error) throw new Error('Could not recheck booking attention');
+        if (checked.data !== true) { skipped++; continue; }
+      }
       result = await sendJob(job, config, fetcher);
     } catch {
       result = { ok: false, error: "Email delivery temporarily unavailable" };
@@ -141,5 +151,5 @@ export async function drain(
     if (result.ok) sent++;
     else failed++;
   }
-  return { sent, failed };
+  return { sent, failed, skipped };
 }

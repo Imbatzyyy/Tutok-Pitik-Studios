@@ -85,6 +85,8 @@ export default function BookingWorkspace({
   const tabs: BookingTab[] = ['details', 'payments', 'requests', 'preparation', 'conversation', ...(team ? (['history', 'emails'] as BookingTab[]) : [])];
   const [tab, setTab] = useState<BookingTab>(initialTab && tabs.includes(initialTab) ? initialTab : 'details');
   const [busy, setBusy] = useState(false);
+  const [attention, setAttention] = useState<'pending'|'seen'|'failed'>('pending');
+  const [attentionRetry, setAttentionRetry] = useState(0);
   const [error, setError] = useState('');
 
   // Session details draft (team: details tab; client: preparation brief).
@@ -132,6 +134,16 @@ export default function BookingWorkspace({
       setBaseVersion(data.b.version);
     }
   }, [data, dirty]);
+
+  useEffect(() => {
+    if (!admin || data?.b.id !== id) return;
+    let active = true;
+    setAttention('pending');
+    void rpc('studio_acknowledge_booking', { p_booking: id })
+      .then(() => { if (active) setAttention('seen'); })
+      .catch(() => { if (active) setAttention('failed'); });
+    return () => { active = false; };
+  }, [admin, id, data?.b.id, attentionRetry]);
 
   const unsaved = dirty || !!note || !!proofFile || !!referenceFile || !!request.reason || !!reviewReason || !!decision || !!changeReason || !!archiveReason || !!payment.amount || !!payment.reference || !!payment.reason;
   useUnsaved(unsaved);
@@ -281,6 +293,9 @@ export default function BookingWorkspace({
         </button>
       </header>
 
+      {admin && b.status === 'pending' && <div className={attention === 'failed' ? 'notice notice-danger' : 'ops-muted'} role={attention === 'failed' ? 'alert' : 'status'}>
+        {attention === 'seen' ? 'Marked as seen by the studio. Owner reminders have stopped; reservation and payment approval are still separate.' : attention === 'pending' ? 'Marking this booking as seen…' : <>We could not mark this booking as seen. Owner reminders may continue. <button type="button" className="btn btn-ghost btn-sm" onClick={() => setAttentionRetry(n => n + 1)}>Retry acknowledgement</button></>}
+      </div>}
       <div className="ops-status-strip">
         <div>
           <small>Reservation</small>

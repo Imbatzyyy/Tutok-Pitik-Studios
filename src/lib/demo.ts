@@ -180,7 +180,7 @@ const RESERVED = new Set(['select', 'order', 'limit', 'offset', 'on_conflict', '
 
 export function createDemoFetch(supabaseUrl: string): typeof fetch {
   const db = load();
-  db.tables.studio_settings=[{id:true,opens_at:'08:00',closes_at:'20:00',buffer_before:15,buffer_after:15,max_hours:8,lead_days:1,delivery_days:14,review_hours:48}];
+  db.tables.studio_settings=[{id:true,opens_at:'08:00',closes_at:'20:00',buffer_before:15,buffer_after:15,max_hours:8,lead_days:1,delivery_days:14,review_hours:48,owner_notice_hours:2}];
   db.tables.booking_payments ||= db.tables.bookings.map(b=>({id:'p-'+b.id,booking_id:b.id,kind:'deposit',amount:b.price*b.duration/2,method:'GCash',reference:'DEMO-'+b.id,status:b.status==='pending'?'pending':'verified',source:'legacy',reason:'Fictional preview payment',created_at:b.created_at}));
   db.tables.booking_notes ||= [{id:'note1',booking_id:'b-1001',internal:false,body:'Please confirm the entrance and parking arrangements.',author_name:'Demo studio',author_role:'admin',created_at:iso(-1)}];
   db.tables.studio_notifications ||= [{id:1,user_id:'u-super',booking_id:'b-1001',title:'A payment proof needs review',created_at:iso(0),read_at:null}];
@@ -298,6 +298,8 @@ export function createDemoFetch(supabaseUrl: string): typeof fetch {
 
     if(path.startsWith('/rest/v1/rpc/studio_')){
       const name=path.split('/').pop(), all=table('bookings');
+      if(name==='studio_acknowledge_booking')return ['admin','superadmin'].includes(roleOf(currentAccount(headers)))?json(iso(0)):json({message:'Admin sign-in required'},403);
+      if(name==='studio_schedule_settings'){Object.assign(table('studio_settings')[0],body.p_data);save();return json(table('studio_settings')[0]);}
       if(name==='studio_calendar')return json(all.filter(b=>b.booking_date>=body.p_from&&b.booking_date<=body.p_to&&b.status!=='cancelled'));
       if(name==='studio_team_directory')return json(table('users').filter(u=>u.role!=='customer'));
       if(name==='studio_can_verify_payment')return json(roleOf(currentAccount(headers))!=='staff');

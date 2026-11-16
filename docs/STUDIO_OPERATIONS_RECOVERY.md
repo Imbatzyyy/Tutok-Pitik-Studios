@@ -30,6 +30,16 @@ Payments remain manual GCash / external transactions. Verify the actual incoming
 
 Email delivery is queued transactionally with deduplication and bounded retries. **Sent** means Resend accepted the message. **Delivered** means a signed provider delivery event was received; it does not prove that a person read the email. Bounces, failures and complaints are visible in Notifications. An ambiguous send beyond the provider's safe retry window requires delivery review.
 
+## Owner reminders for unopened bookings
+
+The studio still receives the initial new-booking email. In addition, the database checks every 15 minutes for future pending bookings that no admin has opened for **2 hours**. Eligible alerts go only to **tutokpitikstudios@gmail.com** through the existing branded Resend email worker, even when nobody has the website open. Normal delivery is shortly after the two-hour threshold (up to the next quarter-hour check plus the worker/provider delay).
+
+Follow-ups are limited to once per booking per 24 hours. There is never another reminder queued while an earlier one is awaiting delivery, retry or operator review. Admins can adjust the initial threshold from **Availability → Owner email after** (1–168 hours). This is separate from the existing pending-review target. The official recipient is selected on the server and cannot be changed by a customer request.
+
+When an admin or super admin opens a booking successfully, the page records it as seen and displays a confirmation. Staff and customers cannot acknowledge on the owner's behalf. Acknowledgement does not approve payment, confirm a reservation, modify its version or overwrite an unsaved draft. Marking a notification read or loading the bookings list alone does not count as opening the booking. If acknowledgement fails, the page displays a retry action.
+
+Confirmed, completed, cancelled, archived, past-start bookings and bookings marked waiting for client information do not generate these owner alerts. The worker rechecks eligibility before sending a queued reminder and cancels obsolete ones; email already handed to the provider cannot be recalled. Reminder content includes the booking reference, client name, service, schedule and waiting time, with a sign-in-protected link. Receipts, contact details and private notes stay in the workspace. Delivery is visible in **Notifications → Emails**, and the periodic check appears under **Security & health**. Acknowledgements are included in encrypted recovery snapshots.
+
 ## Encrypted recovery copies
 
 A daily Netlify schedule runs at **03:23 Asia/Manila** (19:23 UTC). It stores encrypted application snapshots and uploaded storage objects in the site's `studio-encrypted-backups` Netlify Blobs store. Fourteen snapshots are retained. Content-addressed encrypted objects are retained while any saved snapshot references them.
