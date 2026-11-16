@@ -298,6 +298,7 @@ function Site() {
             onUpdateUser={setUser}
             onBook={() => leaveView(() => goToBooking())}
             onOpenGallery={(items, index) => setLightbox({ items, index })}
+            onBrowsePortfolio={() => leaveView(() => scrollToSection('portfolio'))}
             onTabChange={(tab) => syncPath(`/account/${tab}`)}
           />
         )}

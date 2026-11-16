@@ -1,8 +1,8 @@
 import BookingWorkspace from './studio/BookingWorkspace';
-import {useStudioLive,confirmNavigation} from '../lib/studio';
+import { useStudioLive, confirmNavigation, type LiveState } from '../lib/studio';
 import '../styles/studio-operations.css';
 import { useEffect, useMemo, useRef, useState, type FormEvent, type PointerEvent as ReactPointerEvent } from 'react';
-import { Ban, CalendarCheck, CalendarDays, Camera, Check, Download, ExternalLink, FileText, Heart, LoaderCircle, LogOut, MapPin, MessageCircle, Receipt, Trash2, UserRound } from 'lucide-react';
+import { Ban, CalendarCheck, CalendarClock, Camera, Check, ChevronRight, Clock, Download, ExternalLink, FileText, Heart, Images, LoaderCircle, Lock, LogOut, MapPin, MessageCircle, Plus, Receipt, Trash2, UserRound } from 'lucide-react';
 import { toast } from 'sonner';
 import Modal from './common/Modal';
 import ConfirmDialog from './common/ConfirmDialog';
@@ -10,7 +10,7 @@ import Picture from './common/Picture';
 import { itemMatchesKey, type PortfolioItem } from '../content/portfolio';
 import { STUDIO } from '../content/site';
 import { normalizeBooking, paymentLabel, paymentTone, photoLabel, statusLabel, statusTone, type NormalizedBooking } from '../lib/bookings';
-import { formatDateLong, formatPesoExact, initials } from '../lib/format';
+import { formatDateLong, formatPesoExact, initials, parseDateKey, toDateKey } from '../lib/format';
 import { AVATAR_BUCKET, resolveAvatarUrl, resolveReceiptUrl, uploadToBucket } from '../lib/images';
 import { errorMessage, notify } from '../lib/api';
 import { supabase } from '../lib/supabase';
@@ -29,6 +29,8 @@ interface UserProfileProps {
   onUpdateUser: (user: SessionUser) => void;
   onBook: () => void;
   onOpenGallery: (items: PortfolioItem[], index: number) => void;
+  /** Closes the profile and scrolls to the portfolio (offered when there are no favorites yet). */
+  onBrowsePortfolio?: () => void;
   /** Keeps /account/<tab> in the address bar in step with the open tab. */
   onTabChange?: (tab: ProfileTab) => void;
 }
@@ -41,7 +43,51 @@ const progressIndex = (booking: NormalizedBooking) => {
   return 0;
 };
 
-function BookingCard({ booking, onViewReceipt }: { booking: NormalizedBooking; onViewReceipt: (booking: NormalizedBooking) => void }) {
+const isDateKey = (value?: string | null): value is string => Boolean(value && /^\d{4}-\d{2}-\d{2}/.test(value));
+
+/** Whole days from today to a booking date; negative once it has passed. */
+const daysUntil = (dateKey: string) => {
+  const today = parseDateKey(toDateKey(new Date()));
+  return Math.round((parseDateKey(dateKey.slice(0, 10)).getTime() - today.getTime()) / 86_400_000);
+};
+
+const shortDay = (dateKey: string) =>
+  parseDateKey(dateKey.slice(0, 10)).toLocaleDateString('en-US', { weekday: 'short', month: 'short', day: 'numeric' });
+
+const whenLabel = (days: number) => (days <= 0 ? 'Today' : days === 1 ? 'Tomorrow' : `In ${days} days`);
+
+/** Still ahead of the customer: pending or confirmed, and not dated in the past. */
+const isUpcoming = (booking: NormalizedBooking) =>
+  (booking.status === 'pending' || booking.status === 'confirmed') && (!isDateKey(booking.date) || daysUntil(booking.date) >= 0);
+
+function LiveStatus({ state }: { state: LiveState }) {
+  return (
+    <p className={`pf-live is-${state.toLowerCase()}`} role="status">
+      <span className="pf-live-dot" aria-hidden="true" />
+      Booking updates: {state}
+    </p>
+  );
+}
+
+function DateTile({ dateKey }: { dateKey: string }) {
+  if (!isDateKey(dateKey)) {
+    return (
+      <div className="bk-date is-empty" aria-hidden="true">
+        <CalendarClock size={22} />
+      </div>
+    );
+  }
+  const date = parseDateKey(dateKey.slice(0, 10));
+  return (
+    <div className="bk-date" aria-hidden="true">
+      <span className="bk-date-day">{date.toLocaleDateString('en-US', { weekday: 'short' })}</span>
+      <strong>{date.getDate()}</strong>
+      <span className="bk-date-month">{date.toLocaleDateString('en-US', { month: 'short', year: 'numeric' })}</span>
+    </div>
+  );
+}
+
+function BookingCard({ booking, onViewReceipt, onManage }: { booking: NormalizedBooking; onViewReceipt: (booking: NormalizedBooking) => void; onManage: (id: string) => void }) {
   const [downloading, setDownloading] = useState(false);
   const step = progressIndex(booking);
   const cancelled = booking.status === 'cancelled';
@@ -60,13 +106,21 @@ function BookingCard({ booking, onViewReceipt }: { booking: NormalizedBooking; o
   };
 
   return (
-    <article className={`booking-card ${cancelled ? 'is-cancelled' : ''}`}>
-      <header className="booking-card-head">
-        <div>
-          <h4>{booking.service}</h4>
-          <span className="booking-ref">{booking.reference}</span>
+    <article className={`bk-card is-${booking.status}`}>
+      <header className="bk-head">
+        <DateTile dateKey={booking.date} />
+        <div className="bk-title">
+          <div className="bk-title-row">
+            <h5>{booking.service}</h5>
+            <span className={`badge badge-${statusTone(booking.status)}`}>{statusLabel(booking.status)}</span>
+          </div>
+          <p className="sr-only">{booking.dateDisplay}</p>
+          <ul className="bk-meta">
+            <li><Clock size={15} aria-hidden="true" /> {booking.time} · {booking.durationLabel}</li>
+            <li><MapPin size={15} aria-hidden="true" /> {booking.location || '—'}</li>
+          </ul>
+          <span className="bk-ref">{booking.reference}</span>
         </div>
-        <span className={`badge badge-${statusTone(booking.status)}`}>{statusLabel(booking.status)}</span>
       </header>
 
       {cancelled ? (
@@ -75,47 +129,35 @@ function BookingCard({ booking, onViewReceipt }: { booking: NormalizedBooking; o
           <p>This booking was not approved{booking.paymentStatus === 'rejected' ? ' because the payment could not be verified' : ''}. Message us if you think this is a mistake, or submit a new booking.</p>
         </div>
       ) : (
-        <ol className="tracker" aria-label="Booking progress">
+        <ol className="bk-steps" aria-label="Booking progress">
           {STEPS.map((label, index) => (
-            <li key={label} className={index < step ? 'is-done' : index === step ? 'is-current' : ''}>
-              <span className="tracker-dot">{index < step ? <Check size={12} /> : null}</span>
-              <span className="tracker-label">{label}</span>
+            <li key={label} className={index < step ? 'is-done' : index === step ? 'is-current' : ''} aria-current={index === step ? 'step' : undefined}>
+              <span className="bk-step-bar" aria-hidden="true" />
+              <span className="bk-step-label">
+                {index < step ? <Check size={13} aria-hidden="true" /> : null}
+                {label}
+              </span>
             </li>
           ))}
         </ol>
       )}
 
-      <dl className="booking-facts">
+      <dl className="bk-money">
         <div>
-          <dt><CalendarDays size={14} aria-hidden="true" /> Date</dt>
-          <dd>{booking.dateDisplay}</dd>
+          <dt>Total</dt>
+          <dd>{formatPesoExact(booking.totalAmount)}</dd>
+          {booking.transportationFee > 0 && <dd className="bk-money-sub">incl. {formatPesoExact(booking.transportationFee)} transportation</dd>}
         </div>
         <div>
-          <dt>Time</dt>
-          <dd>{booking.time} · {booking.durationLabel}</dd>
+          <dt>Downpayment</dt>
+          <dd>{formatPesoExact(booking.downpaymentAmount)}</dd>
+          <dd className={`bk-money-sub bk-pay text-${paymentTone(booking.paymentStatus)}`}>{paymentLabel(booking.paymentStatus)}</dd>
         </div>
-        <div className="span-2">
-          <dt><MapPin size={14} aria-hidden="true" /> Location</dt>
-          <dd>{booking.location || '—'}</dd>
+        <div>
+          <dt>Due on shoot day</dt>
+          <dd>{formatPesoExact(booking.remainingBalance)}</dd>
         </div>
       </dl>
-
-      <div className="booking-money">
-        <div>
-          <span>Total</span>
-          <strong>{formatPesoExact(booking.totalAmount)}</strong>
-          {booking.transportationFee > 0 && <small>incl. {formatPesoExact(booking.transportationFee)} transportation</small>}
-        </div>
-        <div>
-          <span>Downpayment</span>
-          <strong>{formatPesoExact(booking.downpaymentAmount)}</strong>
-          <small className={`text-${paymentTone(booking.paymentStatus)}`}>{paymentLabel(booking.paymentStatus)}</small>
-        </div>
-        <div>
-          <span>Due on shoot day</span>
-          <strong>{formatPesoExact(booking.remainingBalance)}</strong>
-        </div>
-      </div>
 
       {booking.adminNote && (
         <div className="studio-note">
@@ -143,20 +185,25 @@ function BookingCard({ booking, onViewReceipt }: { booking: NormalizedBooking; o
         </div>
       )}
 
-      <footer className="booking-card-actions">
-        {hasReceipt && (
-          <button type="button" className="btn btn-ghost btn-sm" onClick={() => onViewReceipt(booking)}>
-            <Receipt size={16} /> Payment receipt
-          </button>
-        )}
-        {booking.status === 'completed' && (
-          <button type="button" className="btn btn-ghost btn-sm" onClick={download} disabled={downloading}>
-            {downloading ? <LoaderCircle size={16} className="spin" /> : <Download size={16} />} Official receipt (PDF)
-          </button>
-        )}
-        <a className="btn btn-ghost btn-sm" href={STUDIO.socials.messenger} target="_blank" rel="noopener noreferrer">
-          <MessageCircle size={16} /> Ask about {booking.reference}
-        </a>
+      <footer className="bk-actions">
+        <button type="button" className="btn btn-sm bk-manage" onClick={() => onManage(booking.id)}>
+          Manage booking <ChevronRight size={16} aria-hidden="true" />
+        </button>
+        <div className="bk-actions-secondary">
+          {hasReceipt && (
+            <button type="button" className="btn btn-ghost btn-sm" onClick={() => onViewReceipt(booking)}>
+              <Receipt size={16} /> Payment receipt
+            </button>
+          )}
+          {booking.status === 'completed' && (
+            <button type="button" className="btn btn-ghost btn-sm" onClick={download} disabled={downloading}>
+              {downloading ? <LoaderCircle size={16} className="spin" /> : <Download size={16} />} Official receipt (PDF)
+            </button>
+          )}
+          <a className="btn btn-ghost btn-sm" href={STUDIO.socials.messenger} target="_blank" rel="noopener noreferrer" aria-label={`Ask on Messenger about ${booking.reference}`}>
+            <MessageCircle size={16} /> Ask on Messenger
+          </a>
+        </div>
       </footer>
     </article>
   );
@@ -262,7 +309,7 @@ function AvatarCropper({ source, onCancel, onSave }: { source: string; onCancel:
   );
 }
 
-export default function UserProfile({ isOpen, initialTab, user, catalog, onClose, onLogout, onUpdateUser, onBook, onOpenGallery, onTabChange }: UserProfileProps) {
+export default function UserProfile({ isOpen, initialTab, user, catalog, onClose, onLogout, onUpdateUser, onBook, onOpenGallery, onBrowsePortfolio, onTabChange }: UserProfileProps) {
   const isCustomer = user.role === 'customer';
   // Team accounts only have the Account tab.
   const startTab: ProfileTab = isCustomer ? initialTab || 'bookings' : 'account';
@@ -272,9 +319,9 @@ export default function UserProfile({ isOpen, initialTab, user, catalog, onClose
     if (isOpen) onTabChange?.(tab);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [isOpen, tab]);
-  const [bookingRevision,setBookingRevision]=useState(0);
-  const [openBooking,setOpenBooking]=useState<string|null>(null);
-  const live=useStudioLive(user.id,false,()=>setBookingRevision(n=>n+1),isOpen&&isCustomer);
+  const [bookingRevision, setBookingRevision] = useState(0);
+  const [openBooking, setOpenBooking] = useState<string | null>(null);
+  const live = useStudioLive(user.id, false, () => setBookingRevision((n) => n + 1), isOpen && isCustomer);
   const [bookings, setBookings] = useState<NormalizedBooking[] | null>(null);
   const [receipt, setReceipt] = useState<{ url: string; name: string } | null>(null);
   const [form, setForm] = useState({ firstName: user.firstName, lastName: user.lastName, phone: user.phone });
@@ -390,6 +437,41 @@ export default function UserProfile({ isOpen, initialTab, user, catalog, onClose
     else toast.error('Receipt is not available right now');
   };
 
+  // Upcoming shoots soonest first; everything else (done, cancelled or dated in the past) newest first.
+  const upcoming = useMemo(
+    () => (bookings || []).filter(isUpcoming).sort((a, b) => `${a.date} ${a.startTime}`.localeCompare(`${b.date} ${b.startTime}`)),
+    [bookings]
+  );
+  const past = useMemo(() => (bookings || []).filter((booking) => !isUpcoming(booking)).sort((a, b) => b.date.localeCompare(a.date)), [bookings]);
+  const completedCount = (bookings || []).filter((booking) => booking.status === 'completed').length;
+  const nextShoot = upcoming.find((booking) => booking.status === 'confirmed' && isDateKey(booking.date)) || upcoming.find((booking) => isDateKey(booking.date));
+  const memberYear = user.joinDate ? user.joinDate.slice(0, 4) : '';
+  const panelRef = useRef<HTMLDivElement>(null);
+
+  // Opening a booking swaps the list for its workspace, so bring the top of it into view.
+  useEffect(() => {
+    if (openBooking) panelRef.current?.scrollIntoView({ block: 'start' });
+  }, [openBooking]);
+
+  const selectTab = (next: ProfileTab) => {
+    void confirmNavigation().then((ok) => {
+      if (ok) setTab(next);
+    });
+  };
+
+  const manageBooking = (id: string) => {
+    void confirmNavigation().then((ok) => {
+      if (!ok) return;
+      setTab('bookings');
+      setOpenBooking(id);
+    });
+  };
+
+  const startBooking = () => {
+    onClose();
+    onBook();
+  };
+
   const tabs: { id: ProfileTab; label: string; icon: typeof Heart; count?: number }[] = isCustomer
     ? [
         { id: 'bookings', label: 'Bookings', icon: FileText, count: bookings?.length },
@@ -398,74 +480,166 @@ export default function UserProfile({ isOpen, initialTab, user, catalog, onClose
       ]
     : [{ id: 'account', label: 'Account', icon: UserRound }];
 
+  const renderCards = (list: NormalizedBooking[]) =>
+    list.map((booking) => <BookingCard key={booking.id} booking={booking} onViewReceipt={viewReceipt} onManage={setOpenBooking} />);
+
   return (
     <>
-      <Modal open={isOpen} onClose={()=>{void confirmNavigation().then((ok)=>{if(ok)onClose();});}} size="lg" className="profile-modal">
-        <div className="profile-head">
-          <div className="avatar avatar-lg">
-            {user.profilePicture ? <img src={user.profilePicture} alt="" /> : <span>{initials(user.fullName)}</span>}
-            <button type="button" className="avatar-edit" onClick={() => fileRef.current?.click()} aria-label="Change profile photo">
-              <Camera size={14} />
-            </button>
-            <input ref={fileRef} type="file" accept="image/*" className="sr-only" onChange={(event) => pickPhoto(event.target.files?.[0])} tabIndex={-1} />
+      <Modal
+        open={isOpen}
+        onClose={() => {
+          void confirmNavigation().then((ok) => {
+            if (ok) onClose();
+          });
+        }}
+        size="lg"
+        className="profile-modal"
+      >
+        <section className="pf-hero" aria-label="Your profile">
+          <div className="pf-cover" aria-hidden="true" />
+          <div className="pf-identity">
+            <div className="avatar pf-avatar">
+              {user.profilePicture ? <img src={user.profilePicture} alt="" /> : <span>{initials(user.fullName)}</span>}
+              <button type="button" className="pf-avatar-edit" onClick={() => fileRef.current?.click()} aria-label="Change profile photo">
+                <Camera size={15} />
+              </button>
+              <input ref={fileRef} type="file" accept="image/*" className="sr-only" onChange={(event) => pickPhoto(event.target.files?.[0])} tabIndex={-1} />
+            </div>
+            <div className="pf-name">
+              <span className="pf-chip">{isCustomer ? 'Client account' : 'Studio team'}</span>
+              <h2>{user.fullName}</h2>
+              <p>{user.username ? `@${user.username} · ` : ''}{user.email}</p>
+            </div>
           </div>
-          <div>
-            <h2>{user.fullName}</h2>
-            <p>{user.username ? `@${user.username} · ` : ''}{user.email}</p>
-          </div>
-        </div>
 
-        {tabs.length > 1 && (
-          <div className="tabs" role="tablist" aria-label="Profile sections">
-            {tabs.map((entry) => {
-              const Icon = entry.icon;
-              return (
-                <button key={entry.id} type="button" role="tab" aria-selected={tab === entry.id} className={tab === entry.id ? 'is-active' : ''} onClick={() => {void confirmNavigation().then((ok)=>{if(ok)setTab(entry.id);});}}>
-                  <Icon size={16} aria-hidden="true" /> {entry.label}
-                  {entry.count ? <span className="tab-count">{entry.count}</span> : null}
+          {isCustomer && (
+            <div className={`pf-summary ${nextShoot ? 'has-next' : ''}`}>
+              <ul className="pf-stats" aria-label="Your bookings at a glance">
+                <li><strong>{bookings ? upcoming.length : '–'}</strong><span>Upcoming</span></li>
+                <li><strong>{bookings ? completedCount : '–'}</strong><span>Completed</span></li>
+                <li><strong>{memberYear || '—'}</strong><span>Joined</span></li>
+              </ul>
+              {nextShoot && (
+                <button type="button" className="pf-next" onClick={() => manageBooking(nextShoot.id)}>
+                  <span className="pf-next-icon" aria-hidden="true"><CalendarClock size={20} /></span>
+                  <span className="pf-next-text">
+                    <span className="pf-next-label">
+                      {nextShoot.status === 'confirmed' ? 'Next shoot' : 'Requested shoot'} · {whenLabel(daysUntil(nextShoot.date))}
+                    </span>
+                    <strong>{nextShoot.service}</strong>
+                    <span className="pf-next-when">
+                      <span>{shortDay(nextShoot.date)}</span> · <span>{nextShoot.time}</span>
+                    </span>
+                  </span>
+                  <ChevronRight className="pf-next-go" size={20} aria-hidden="true" />
                 </button>
-              );
-            })}
-          </div>
-        )}
-
-        <div className="profile-body">
-          {tab === 'bookings' && isCustomer && (
-            <div className="stack">
-              {bookings === null ? (
-                <div className="loading-row"><LoaderCircle size={20} className="spin" /> Loading your bookings…</div>
-              ) : bookings.length === 0 ? (
-                <div className="empty-state">
-                  <CalendarCheck size={40} aria-hidden="true" />
-                  <h3>No bookings yet</h3>
-                  <p>Pick a service and date. Your bookings, payment status and photo links will show up here.</p>
-                  <button type="button" className="btn btn-primary" onClick={() => { onClose(); onBook(); }}>Book a session</button>
-                </div>
-              ) : (
-                <><p role="status">Booking updates: {live}</p>{openBooking?<BookingWorkspace id={openBooking} user={user} revision={bookingRevision} onClose={()=>setOpenBooking(null)} onChanged={()=>setBookingRevision(n=>n+1)}/>:bookings.map((booking) => <div key={booking.id}><BookingCard booking={booking} onViewReceipt={viewReceipt}/><button className="btn btn-secondary" onClick={()=>setOpenBooking(booking.id)}>Manage booking · Messages & requests</button></div>)}</>
               )}
             </div>
           )}
+        </section>
 
-          {tab === 'favorites' && isCustomer && (
-            favoriteItems.length === 0 ? (
-              <div className="empty-state">
-                <Heart size={40} aria-hidden="true" />
+        <div ref={panelRef} className="pf-anchor" />
+
+        {tabs.length > 1 && (
+          <div className="pf-tabs-wrap">
+            <div className="tabs pf-tabs" role="tablist" aria-label="Profile sections">
+              {tabs.map((entry) => {
+                const Icon = entry.icon;
+                return (
+                  <button key={entry.id} type="button" role="tab" aria-selected={tab === entry.id} className={tab === entry.id ? 'is-active' : ''} onClick={() => selectTab(entry.id)}>
+                    <Icon size={16} aria-hidden="true" /> {entry.label}
+                    {entry.count ? <span className="tab-count">{entry.count}</span> : null}
+                  </button>
+                );
+              })}
+            </div>
+          </div>
+        )}
+
+        {tab === 'bookings' && isCustomer && (
+          <div className="pf-panel">
+            {bookings === null ? (
+              <div className="loading-row"><LoaderCircle size={20} className="spin" /> Loading your bookings…</div>
+            ) : bookings.length === 0 ? (
+              <div className="empty-state pf-empty">
+                <span className="pf-empty-icon" aria-hidden="true"><CalendarCheck size={28} /></span>
+                <h3>No bookings yet</h3>
+                <p>Pick a service and date. Your bookings, payment status and photo links will show up here.</p>
+                <button type="button" className="btn btn-primary" onClick={startBooking}>Book a session</button>
+              </div>
+            ) : openBooking ? (
+              <>
+                <LiveStatus state={live} />
+                <BookingWorkspace id={openBooking} user={user} revision={bookingRevision} onClose={() => setOpenBooking(null)} onChanged={() => setBookingRevision((n) => n + 1)} />
+              </>
+            ) : (
+              <>
+                <div className="pf-section-head">
+                  <div className="pf-section-title">
+                    <h3>Your bookings</h3>
+                    <button type="button" className="btn btn-outline btn-sm" onClick={startBooking}>
+                      <Plus size={16} aria-hidden="true" /> New booking
+                    </button>
+                  </div>
+                  <p>Open a booking to message the studio or request changes.</p>
+                  <LiveStatus state={live} />
+                </div>
+
+                <section className="pf-group" aria-labelledby="pf-upcoming">
+                  <h4 id="pf-upcoming" className="pf-group-title">Upcoming <span>{upcoming.length}</span></h4>
+                  {upcoming.length ? (
+                    renderCards(upcoming)
+                  ) : (
+                    <div className="pf-inline-empty">
+                      <span>No upcoming shoots right now.</span>
+                      <button type="button" className="btn-link" onClick={startBooking}>Book a session</button>
+                    </div>
+                  )}
+                </section>
+
+                {past.length > 0 && (
+                  <section className="pf-group" aria-labelledby="pf-past">
+                    <h4 id="pf-past" className="pf-group-title">Past &amp; cancelled <span>{past.length}</span></h4>
+                    {renderCards(past)}
+                  </section>
+                )}
+              </>
+            )}
+          </div>
+        )}
+
+        {tab === 'favorites' && isCustomer && (
+          <div className="pf-panel">
+            {favoriteItems.length === 0 ? (
+              <div className="empty-state pf-empty">
+                <span className="pf-empty-icon" aria-hidden="true"><Heart size={28} /></span>
                 <h3>No favorites yet</h3>
                 <p>Open any portfolio photo and tap the heart to save looks you like. Share them with us when you book.</p>
+                {onBrowsePortfolio && (
+                  <button type="button" className="btn btn-outline" onClick={onBrowsePortfolio}>
+                    <Images size={18} aria-hidden="true" /> Browse the portfolio
+                  </button>
+                )}
               </div>
             ) : (
-              <ul className="favorite-grid">
-                {favoriteItems.map((item, index) => (
-                  <li key={item.id}>
-                    <button type="button" className="favorite-open" onClick={() => onOpenGallery(favoriteItems, index)} aria-label={`View ${item.title}`}>
-                      <Picture item={item} alt={item.title} />
-                    </button>
-                    <div className="favorite-meta">
-                      <span>{item.title}</span>
+              <>
+                <div className="pf-section-head">
+                  <h3>Saved looks</h3>
+                  <p>Photos you liked. Share them with us when you book.</p>
+                </div>
+                <ul className="pf-favs">
+                  {favoriteItems.map((item, index) => (
+                    <li key={item.id} className="pf-fav">
+                      <button type="button" className="pf-fav-open" onClick={() => onOpenGallery(favoriteItems, index)} aria-label={`View ${item.title}`}>
+                        <Picture item={item} alt={item.title} />
+                        <span className="pf-fav-caption" aria-hidden="true">
+                          <strong>{item.title}</strong>
+                          {item.description && <span>{item.description}</span>}
+                        </span>
+                      </button>
                       <button
                         type="button"
-                        className="icon-btn icon-btn-sm"
+                        className="pf-fav-remove"
                         aria-label={`Remove ${item.title} from favorites`}
                         onClick={() => {
                           favorites.filter((key) => itemMatchesKey(item, key)).forEach((key) => void remove(key));
@@ -474,23 +648,32 @@ export default function UserProfile({ isOpen, initialTab, user, catalog, onClose
                       >
                         <Trash2 size={16} />
                       </button>
-                    </div>
-                  </li>
-                ))}
-              </ul>
-            )
-          )}
+                    </li>
+                  ))}
+                </ul>
+              </>
+            )}
+          </div>
+        )}
 
-          {tab === 'account' && (
-            <form className="account-form" onSubmit={saveAccount}>
+        {tab === 'account' && (
+          <div className="pf-panel pf-account">
+            <form className="account-form pf-card" onSubmit={saveAccount}>
+              <header className="pf-card-head">
+                <span className="pf-card-icon" aria-hidden="true"><UserRound size={18} /></span>
+                <div>
+                  <h3>Personal details</h3>
+                  <p>Your name and the number we can reach you on.</p>
+                </div>
+              </header>
               <div className="field-row">
                 <div className="field">
                   <label htmlFor="profile-first">First name</label>
-                  <input id="profile-first" autoComplete="given-name" value={form.firstName} onChange={(event) => setForm({ ...form, firstName: event.target.value })} />
+                  <input id="profile-first" type="text" autoComplete="given-name" value={form.firstName} onChange={(event) => setForm({ ...form, firstName: event.target.value })} />
                 </div>
                 <div className="field">
                   <label htmlFor="profile-last">Last name</label>
-                  <input id="profile-last" autoComplete="family-name" value={form.lastName} onChange={(event) => setForm({ ...form, lastName: event.target.value })} />
+                  <input id="profile-last" type="text" autoComplete="family-name" value={form.lastName} onChange={(event) => setForm({ ...form, lastName: event.target.value })} />
                 </div>
               </div>
               <div className="field">
@@ -498,26 +681,48 @@ export default function UserProfile({ isOpen, initialTab, user, catalog, onClose
                 <input id="profile-phone" type="tel" inputMode="tel" autoComplete="tel" placeholder="0917 123 4567" value={form.phone} onChange={(event) => setForm({ ...form, phone: event.target.value })} />
                 {isCustomer && !user.phone && <p className="field-hint">Needed for bookings so we can reach you on the day.</p>}
               </div>
-              <div className="field">
-                <label htmlFor="profile-email">Email</label>
-                <input id="profile-email" type="email" value={user.email} readOnly disabled />
-                <p className="field-hint">Contact us to change the email on your account.</p>
-              </div>
-              <dl className="meta-list">
-                <div><dt>Member since</dt><dd>{user.joinDate ? formatDateLong(user.joinDate.slice(0, 10)) : '—'}</dd></div>
-                {!isCustomer && <div><dt>Role</dt><dd className="capitalize">{user.role}</dd></div>}
-              </dl>
-              <div className="form-actions">
-                <button type="button" className="btn btn-ghost btn-danger-text" onClick={() => setLogoutOpen(true)}>
-                  <LogOut size={16} /> Sign out
-                </button>
+              <div className="pf-card-foot">
+                {dirty && <span className="pf-save-hint">Unsaved changes</span>}
                 <button type="submit" className="btn btn-primary" disabled={!dirty || saving}>
                   {saving && <LoaderCircle size={16} className="spin" />} Save changes
                 </button>
               </div>
             </form>
-          )}
-        </div>
+
+            <div className="pf-side">
+              <section className="pf-card" aria-labelledby="pf-signin-title">
+                <header className="pf-card-head">
+                  <span className="pf-card-icon" aria-hidden="true"><Lock size={18} /></span>
+                  <div>
+                    <h3 id="pf-signin-title">Sign-in email</h3>
+                    <p>Contact us to change the email on your account.</p>
+                  </div>
+                </header>
+                <div className="field">
+                  <label htmlFor="profile-email" className="sr-only">Email</label>
+                  <input id="profile-email" type="email" value={user.email} readOnly disabled />
+                </div>
+                <dl className="meta-list pf-meta">
+                  <div><dt>Member since</dt><dd>{user.joinDate ? formatDateLong(user.joinDate.slice(0, 10)) : '—'}</dd></div>
+                  {!isCustomer && <div><dt>Role</dt><dd className="capitalize">{user.role}</dd></div>}
+                </dl>
+              </section>
+
+              <section className="pf-card" aria-labelledby="pf-signout-title">
+                <header className="pf-card-head">
+                  <span className="pf-card-icon" aria-hidden="true"><LogOut size={18} /></span>
+                  <div>
+                    <h3 id="pf-signout-title">Sign out</h3>
+                    <p>Sign out on this device. You can sign back in any time.</p>
+                  </div>
+                </header>
+                <button type="button" className="btn btn-ghost btn-danger-text" onClick={() => setLogoutOpen(true)}>
+                  <LogOut size={16} /> Sign out
+                </button>
+              </section>
+            </div>
+          </div>
+        )}
       </Modal>
 
       {cropSource && <AvatarCropper source={cropSource} onCancel={() => setCropSource(null)} onSave={savePhoto} />}

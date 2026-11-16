@@ -1065,7 +1065,7 @@ input[type='date']::-webkit-calendar-picker-indicator {
     border-radius: var(--radius-pill);
     background: var(--color-primary);
     color: #fff;
-    font-size: 11px;
+    font-size: 12px;
     line-height: 20px;
     text-align: center;
 }
