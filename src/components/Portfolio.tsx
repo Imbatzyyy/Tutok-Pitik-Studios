@@ -8,7 +8,7 @@ interface PortfolioProps {
   onOpen: (items: PortfolioItem[], index: number) => void;
 }
 
-const PAGE_SIZE = 9;
+const PAGE_SIZE = 12;
 export const PORTFOLIO_FILTER_EVENT = 'tps:portfolio-filter';
 
 export default function Portfolio({ items, onOpen }: PortfolioProps) {

@@ -1,9 +1,8 @@
 import { useEffect, useMemo, useRef, useState, type FormEvent } from 'react';
-import { CalendarCheck, Check, ImageUp, Info, LoaderCircle, Lock, Mail, MapPin, MessageCircle, Phone, ShieldCheck, Trash2 } from 'lucide-react';
+import { ArrowRight, CalendarCheck, Check, Copy, Download, ImageUp, Info, LoaderCircle, Lock, Mail, MapPin, MessageCircle, Phone, ShieldCheck, Trash2 } from 'lucide-react';
 import { toast } from 'sonner';
 import BookingCalendar from './BookingCalendar';
 import ConfirmDialog from './common/ConfirmDialog';
-import Modal from './common/Modal';
 import PrivacyHighlight from './PrivacyHighlight';
 import { SERVICE_ICONS } from './Services';
 import { DOWNPAYMENT_RATE, MAX_ACTIVE_BOOKINGS, SERVICES, STUDIO, findService } from '../content/site';
@@ -13,6 +12,8 @@ import { formatDateLong, formatPeso, formatPesoExact, formatTime, hoursLabel } f
 import { compressImage, randomId, RECEIPTS_BUCKET, uploadToBucket } from '../lib/images';
 import { errorMessage, isMissingRelation, notify } from '../lib/api';
 import { supabase } from '../lib/supabase';
+import { useInView } from '../hooks/useInView';
+import { markBookingResume, takeBookingResume } from '../lib/booking-resume';
 
 export interface BookingPrefill {
   serviceId?: string;
@@ -56,6 +57,10 @@ interface Draft {
 }
 
 const DRAFT_KEY = 'tps:booking-draft';
+const QR_SRC = '/gcash-qr.jpg';
+const QR_FILENAME = 'TutokPitikStudios-GCash-QR.jpg';
+
+const isTouchDevice = () => typeof window !== 'undefined' && window.matchMedia?.('(pointer: coarse)').matches;
 const EMPTY_DRAFT: Draft = { serviceId: '', date: null, start: null, hours: null, location: '', notes: '', phone: '' };
 
 const loadDraft = (): Draft => {
@@ -77,11 +82,17 @@ export default function Contact({ user, availability, prefill, onSuccess, onRequ
   const [errors, setErrors] = useState<Record<string, string>>({});
   const [bookingAgreed, setBookingAgreed] = useState(false);
   const [confirmOpen, setConfirmOpen] = useState(false);
-  const [authPromptOpen, setAuthPromptOpen] = useState(false);
+  const [copied, setCopied] = useState(false);
   const [submitting, setSubmitting] = useState(false);
   const submittingRef = useRef(false);
   const fileRef = useRef<HTMLInputElement>(null);
   const sectionRef = useRef<HTMLElement>(null);
+  const formRef = useRef<HTMLFormElement>(null);
+  const payRef = useRef<HTMLFieldSetElement>(null);
+  const submitRef = useRef<HTMLButtonElement>(null);
+  const qrFileRef = useRef<File | null>(null);
+  const sectionInView = useInView(sectionRef, '-35% 0px -35% 0px');
+  const submitInView = useInView(submitRef);
 
   const isGuest = !user || user.role === 'guest';
   const isCustomer = user?.role === 'customer';
@@ -106,6 +117,94 @@ export default function Contact({ user, availability, prefill, onSuccess, onRequ
       Object.keys(patch).forEach((key) => delete next[key]);
       return next;
     });
+  };
+
+  /** Bring one part of the form into view; text inputs also get focus. */
+  const goToField = (key: string, block: ScrollLogicalPosition = 'center') => {
+    const field = sectionRef.current?.querySelector<HTMLElement>(`[data-field="${key}"]`);
+    if (!field) return;
+    field.scrollIntoView({ behavior: 'smooth', block });
+    field.querySelector<HTMLElement>('input:not([type="radio"]):not([type="file"]), textarea')?.focus({ preventScroll: true });
+  };
+
+  const requestAuth = (view: 'signin' | 'signup') => {
+    markBookingResume();
+    onRequireAuth(view);
+  };
+
+  // What the visitor still has to do, in form order. Drives the mobile booking bar.
+  const nextStep: { label: string; field?: string } = !service
+    ? { label: 'Choose a service', field: 'serviceId' }
+    : !draft.date
+      ? { label: 'Pick a date', field: 'date' }
+      : draft.start === null
+        ? { label: 'Pick a time', field: 'start' }
+        : !hours
+          ? { label: 'Choose length', field: 'hours' }
+          : draft.location.trim().length < 8
+            ? { label: 'Add location', field: 'location' }
+            : needsPhone && !phoneLooksValid(draft.phone)
+              ? { label: 'Add mobile no.', field: 'phone' }
+              : isGuest
+                ? { label: 'Continue' }
+                : reference.trim().length < 6
+                  ? { label: 'Add GCash ref.', field: 'reference' }
+                  : !receipt
+                    ? { label: 'Upload receipt', field: 'receipt' }
+                    : { label: 'Review & submit' };
+
+  const handleBarAction = () => {
+    if (nextStep.field) goToField(nextStep.field);
+    else formRef.current?.requestSubmit();
+  };
+
+  // Back from sign-in (email or Google): continue where the visitor left off.
+  useEffect(() => {
+    if (!isCustomer || !takeBookingResume()) return;
+    const timer = window.setTimeout(() => {
+      if (ready && payRef.current) {
+        payRef.current.scrollIntoView({ behavior: 'smooth', block: 'start' });
+        payRef.current.focus({ preventScroll: true });
+      } else {
+        sectionRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+      }
+    }, 250);
+    return () => window.clearTimeout(timer);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [isCustomer]);
+
+  // Preload the QR as a file so "Save QR" can open the phone's share sheet
+  // (Save Image → Photos) without losing the tap's user activation.
+  useEffect(() => {
+    if (!isCustomer || !ready || qrFileRef.current || !isTouchDevice()) return;
+    let cancelled = false;
+    fetch(QR_SRC)
+      .then((response) => (response.ok ? response.blob() : Promise.reject()))
+      .then((blob) => {
+        if (!cancelled) qrFileRef.current = new File([blob], QR_FILENAME, { type: blob.type || 'image/jpeg' });
+      })
+      .catch(() => undefined);
+    return () => {
+      cancelled = true;
+    };
+  }, [isCustomer, ready]);
+
+  const saveQr = (event: React.MouseEvent<HTMLAnchorElement>) => {
+    const file = qrFileRef.current;
+    if (!file || !navigator.canShare?.({ files: [file] })) return; // fall back to the download link
+    event.preventDefault();
+    navigator.share({ files: [file], title: `${STUDIO.name} GCash QR` }).catch(() => undefined);
+  };
+
+  const copyAmount = async () => {
+    const amount = String(Math.round(downpayment * 100) / 100);
+    try {
+      await navigator.clipboard.writeText(amount);
+      setCopied(true);
+      window.setTimeout(() => setCopied(false), 2000);
+    } catch {
+      toast.info(`Amount to send: ${formatPesoExact(downpayment)}`);
+    }
   };
 
   useEffect(() => {
@@ -170,11 +269,7 @@ export default function Contact({ user, availability, prefill, onSuccess, onRequ
     }
     setErrors(next);
     const firstKey = Object.keys(next)[0];
-    if (firstKey) {
-      const field = sectionRef.current?.querySelector<HTMLElement>(`[data-field="${firstKey}"]`);
-      field?.scrollIntoView({ behavior: 'smooth', block: 'center' });
-      field?.querySelector<HTMLElement>('input, textarea, button')?.focus({ preventScroll: true });
-    }
+    if (firstKey) goToField(firstKey);
     return !firstKey;
   };
 
@@ -186,7 +281,7 @@ export default function Contact({ user, availability, prefill, onSuccess, onRequ
     }
     if (!validate()) return;
     if (isGuest) {
-      setAuthPromptOpen(true);
+      requestAuth('signup');
       return;
     }
 
@@ -310,7 +405,13 @@ export default function Contact({ user, availability, prefill, onSuccess, onRequ
   const summary = (
     <div className="summary-card">
       <h3>Booking summary</h3>
-      <dl>
+      {!service && (
+        <p className="summary-empty">
+          <CalendarCheck size={18} aria-hidden="true" />
+          Choose a service, date and time. Your total and downpayment show up here instantly.
+        </p>
+      )}
+      <dl hidden={!service}>
         <div>
           <dt>Service</dt>
           <dd>{service?.title || '—'}</dd>
@@ -358,7 +459,7 @@ export default function Contact({ user, availability, prefill, onSuccess, onRequ
         </header>
 
         <div className="booking-layout">
-          <form className="booking-form" onSubmit={handleSubmit} noValidate>
+          <form className="booking-form" onSubmit={handleSubmit} noValidate ref={formRef}>
             {isTeam && (
               <div className="notice notice-info">
                 <Info size={18} aria-hidden="true" />
@@ -471,7 +572,7 @@ export default function Contact({ user, availability, prefill, onSuccess, onRequ
                   <Lock size={18} aria-hidden="true" />
                   <p>
                     You will sign in or create a free account before paying. Your choices are saved on this device.{' '}
-                    <button type="button" className="btn-link" onClick={() => onRequireAuth('signin')}>
+                    <button type="button" className="btn-link" onClick={() => requestAuth('signin')}>
                       Sign in now
                     </button>
                   </p>
@@ -524,7 +625,7 @@ export default function Contact({ user, availability, prefill, onSuccess, onRequ
               </div>
             </fieldset>
 
-            <fieldset className="booking-step" disabled={isTeam || !ready}>
+            <fieldset className="booking-step" disabled={isTeam || !ready} ref={payRef} tabIndex={-1} aria-label="Step 4: Secure your slot">
               <legend>
                 <span className="step-num">4</span> Secure your slot
               </legend>
@@ -538,24 +639,46 @@ export default function Contact({ user, availability, prefill, onSuccess, onRequ
                     <p>Your booking, payment receipt and photo delivery link stay together in your account.</p>
                   </div>
                   <div className="auth-cta-actions">
-                    <button type="button" className="btn btn-primary" onClick={() => onRequireAuth('signup')}>
+                    <button type="button" className="btn btn-primary" onClick={() => requestAuth('signup')}>
                       Create account
                     </button>
-                    <button type="button" className="btn btn-ghost" onClick={() => onRequireAuth('signin')}>
+                    <button type="button" className="btn btn-ghost" onClick={() => requestAuth('signin')}>
                       I have an account
                     </button>
                   </div>
                 </div>
               ) : (
                 <div className="gcash-grid">
-                  <div className="gcash-qr">
-                    <img src="/gcash-qr.jpg" alt={`${STUDIO.name} GCash QR code`} width={220} height={220} loading="lazy" />
-                    <p>
-                      Send <strong>{formatPesoExact(downpayment)}</strong>
-                      <span>{Math.round(DOWNPAYMENT_RATE * 100)}% downpayment via GCash</span>
-                    </p>
+                  <div className="gcash-pay">
+                    <div className="gcash-qr">
+                      <img src={QR_SRC} alt={`${STUDIO.name} GCash QR code`} width={220} height={220} loading="lazy" />
+                      <p>
+                        Send <strong>{formatPesoExact(downpayment)}</strong>
+                        <span>{Math.round(DOWNPAYMENT_RATE * 100)}% downpayment via GCash</span>
+                      </p>
+                    </div>
+                    <div className="gcash-actions">
+                      <a className="btn btn-ghost btn-sm" href={QR_SRC} download={QR_FILENAME} onClick={saveQr}>
+                        <Download size={16} aria-hidden="true" /> Save QR
+                      </a>
+                      <button type="button" className="btn btn-ghost btn-sm" onClick={() => void copyAmount()} aria-live="polite">
+                        {copied ? <Check size={16} aria-hidden="true" /> : <Copy size={16} aria-hidden="true" />}
+                        {copied ? 'Copied' : 'Copy amount'}
+                      </button>
+                    </div>
                   </div>
                   <div className="gcash-proof">
+                    <ol className="gcash-howto">
+                      <li>
+                        <strong>Open the QR in GCash.</strong> On a computer, scan it with your phone. On this phone, tap <em>Save QR</em>, then in GCash choose <em>QR</em> → <em>Upload QR</em> and pick the saved image.
+                      </li>
+                      <li>
+                        <strong>Send exactly {formatPesoExact(downpayment)}.</strong> <em>Copy amount</em> pastes it for you.
+                      </li>
+                      <li>
+                        <strong>Add the reference number and screenshot</strong> from your GCash receipt below.
+                      </li>
+                    </ol>
                     <div className="field" data-field="reference">
                       <label htmlFor="booking-reference">GCash reference number</label>
                       <input
@@ -612,7 +735,7 @@ export default function Contact({ user, availability, prefill, onSuccess, onRequ
             <div className="summary-inline">{summary}</div>
             <PrivacyHighlight />
 
-            <button type="submit" className="btn btn-primary btn-lg btn-block" disabled={isTeam || submitting}>
+            <button type="submit" className="btn btn-primary btn-lg btn-block" disabled={isTeam || submitting} ref={submitRef}>
               {submitting ? <LoaderCircle size={20} className="spin" /> : <CalendarCheck size={20} />}
               {isGuest ? 'Continue to reserve' : 'Review & submit booking'}
             </button>
@@ -669,24 +792,38 @@ export default function Contact({ user, availability, prefill, onSuccess, onRequ
         <p id="booking-agreement-help" className="agreement-help">Links open in a new tab. Your details are used to manage this booking and send service emails. This does not authorize marketing or public use of your photos.</p>
       </ConfirmDialog>
 
-      <Modal
-        open={authPromptOpen}
-        onClose={() => setAuthPromptOpen(false)}
-        size="sm"
-        icon={<ShieldCheck size={22} />}
-        title="Almost there"
-        description="Create a free account or sign in to pay the downpayment and reserve your date. Your selections are saved."
-        footer={
-          <>
-            <button type="button" className="btn btn-ghost" onClick={() => { setAuthPromptOpen(false); onRequireAuth('signin'); }}>
-              Sign in
-            </button>
-            <button type="button" className="btn btn-primary" data-autofocus onClick={() => { setAuthPromptOpen(false); onRequireAuth('signup'); }}>
-              Create account
-            </button>
-          </>
-        }
-      />
+      {!isTeam && (
+        <div className={`booking-bar ${sectionInView && !submitInView && !confirmOpen ? 'is-visible' : ''}`} aria-hidden={!sectionInView || submitInView}>
+          <div className="booking-bar-info">
+            {service ? (
+              <>
+                <span className="booking-bar-title">
+                  {service.title.replace(' Photography', '').replace(' & Architecture', ' & Arch.')}
+                  {draft.date && ` · ${new Date(`${draft.date}T00:00:00`).toLocaleDateString('en-US', { month: 'short', day: 'numeric' })}`}
+                  {draft.start !== null && `, ${formatTime(hourToTime(draft.start))}`}
+                </span>
+                <span className="booking-bar-price">
+                  {hours ? (
+                    <>
+                      <strong>{formatPeso(total)}</strong> · {formatPeso(downpayment)} now
+                    </>
+                  ) : (
+                    `${formatPeso(service.rate)}/hr`
+                  )}
+                </span>
+              </>
+            ) : (
+              <>
+                <span className="booking-bar-title">Book in about 3 minutes</span>
+                <span className="booking-bar-price">Live prices · {Math.round(DOWNPAYMENT_RATE * 100)}% down via GCash</span>
+              </>
+            )}
+          </div>
+          <button type="button" className="btn btn-primary booking-bar-action" onClick={handleBarAction} tabIndex={sectionInView && !submitInView ? 0 : -1}>
+            {nextStep.label} <ArrowRight size={18} aria-hidden="true" />
+          </button>
+        </div>
+      )}
     </section>
   );
 }

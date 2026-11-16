@@ -5,13 +5,22 @@ export const GOOGLE_START_PATH = '/auth/google';
 export const GOOGLE_CALLBACK_PATH = '/auth/callback';
 const ATTEMPT_KEY = 'tps:google-signin';
 const MAX_AGE = 10 * 60 * 1000;
-type Attempt = { startedAt: number; returnTo: '/' | '/#contact' };
+const RETURN_PATHS = ['/', '/#contact', '/account', '/admin'] as const;
+type ReturnPath = (typeof RETURN_PATHS)[number];
+type Attempt = { startedAt: number; returnTo: ReturnPath };
+
+/** Where to land after Google: the booking form, the page that asked for sign-in, or home. */
+const returnPathFor = (booking: boolean): ReturnPath => {
+  if (booking) return '/#contact';
+  const section = `/${window.location.pathname.split('/')[1] || ''}`;
+  return section === '/account' || section === '/admin' ? section : '/';
+};
 
 /** Store only navigation state, never credentials or customer details. */
 export function prepareGoogleSignIn(remember: boolean, booking: boolean) {
   setRememberMePreference(remember);
   sessionStorage.setItem(ATTEMPT_KEY, JSON.stringify({
-    startedAt: Date.now(), returnTo: booking ? '/#contact' : '/',
+    startedAt: Date.now(), returnTo: returnPathFor(booking),
   } satisfies Attempt));
   window.location.assign(GOOGLE_START_PATH);
 }
@@ -21,7 +30,7 @@ export function readGoogleAttempt(): Attempt | null {
     const value = JSON.parse(sessionStorage.getItem(ATTEMPT_KEY) || 'null');
     if (!value || !Number.isFinite(value.startedAt)
       || value.startedAt > Date.now() || Date.now() - value.startedAt > MAX_AGE
-      || (value.returnTo !== '/' && value.returnTo !== '/#contact')) return null;
+      || !RETURN_PATHS.includes(value.returnTo)) return null;
     return value;
   } catch { return null; }
 }

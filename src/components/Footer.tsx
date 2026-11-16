@@ -15,16 +15,6 @@ const LINKS = [
 export default function Footer({ onBook }: { onBook: (serviceId?: string) => void }) {
   return (
     <footer className="site-footer">
-      <div className="container footer-cta">
-        <div>
-          <h2>Ready when you are.</h2>
-          <p>Check open dates and reserve your session in a few minutes.</p>
-        </div>
-        <button type="button" className="btn btn-primary btn-lg" onClick={() => onBook()}>
-          Book a session
-        </button>
-      </div>
-
       <div className="container footer-grid">
         <div className="footer-brand">
           <img src={logoImage} alt="" width={56} height={56} loading="lazy" />

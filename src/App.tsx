@@ -1,11 +1,10 @@
-import { lazy, Suspense, useCallback, useEffect, useMemo, useState } from 'react';
+import { lazy, Suspense, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Toaster, toast } from 'sonner';
 import Navigation from './components/Navigation';
 import Hero from './components/Hero';
 import StatsBar from './components/StatsBar';
 import Portfolio from './components/Portfolio';
 import Services from './components/Services';
-import Pricing from './components/Pricing';
 import Process from './components/Process';
 import About from './components/About';
 import Testimonials from './components/Testimonials';
@@ -22,6 +21,9 @@ import { toDateKey } from './lib/format';
 import { scrollToSection } from './lib/scroll';
 import { GUEST_USER, InactiveAccountError, resolveSessionUser, type SessionUser } from './lib/session';
 import { isDemoMode, supabase } from './lib/supabase';
+import { clearBookingResume } from './lib/booking-resume';
+import { HOME, parseRoute, type SiteRoute } from './lib/routes';
+import NotFound from './components/NotFound';
 
 const Auth = lazy(() => import('./components/Auth'));
 const UserProfile = lazy(() => import('./components/UserProfile'));
@@ -39,11 +41,71 @@ function Site() {
   const [portfolio, setPortfolio] = useState<PortfolioItem[]>(DEFAULT_PORTFOLIO);
   const [lightbox, setLightbox] = useState<{ items: PortfolioItem[]; index: number } | null>(null);
   const [success, setSuccess] = useState<BookingSuccess | null>(null);
-  const [auth, setAuth] = useState<{ open: boolean; view: AuthView; intent?: 'booking' }>({ open: new URLSearchParams(window.location.search).get('signin') === '1', view: 'signin' });
-  const [profile, setProfile] = useState<{ open: boolean; tab?: ProfileTab }>({ open: false });
-  const [adminOpen, setAdminOpen] = useState(false);
+  const [authReady, setAuthReady] = useState(false);
+  const [auth, setAuth] = useState<{ open: boolean; view: AuthView; intent?: 'booking' }>(() => ({ open: new URLSearchParams(window.location.search).get('signin') === '1', view: 'signin' }));
+  const [route, setRoute] = useState<SiteRoute>(() => parseRoute(window.location.pathname) || HOME);
   const [prefill, setPrefill] = useState<BookingPrefill | null>(null);
   const availability = useAvailability();
+  const routeRef = useRef(route);
+  routeRef.current = route;
+  const authSucceeded = useRef(false);
+  const leaving = useRef(false);
+  const afterLeave = useRef<(() => void) | null>(null);
+
+  // ---- Page addresses: /account/<tab> and /admin/<tab> open their overlays ----
+
+  /** Open an overlay as its own history entry, so Back closes it. */
+  const openView = useCallback((path: string) => {
+    window.history.pushState({ tps: true }, '', path);
+    setRoute(parseRoute(path) || HOME);
+  }, []);
+
+  /** Mirror a tab change in the address bar without adding history entries. */
+  const syncPath = useCallback((path: string) => {
+    if (routeRef.current.view === 'home' || leaving.current || window.location.pathname === path) return;
+    window.history.replaceState(window.history.state, '', path);
+  }, []);
+
+  /** Close the overlay and return to the page; `then` runs once the address is back to "/". */
+  const leaveView = useCallback((then?: () => void) => {
+    if (leaving.current) {
+      if (then) afterLeave.current = then;
+      return;
+    }
+    if (routeRef.current.view === 'home') {
+      then?.();
+      return;
+    }
+    setRoute(HOME);
+    if (window.history.state?.tps) {
+      leaving.current = true;
+      afterLeave.current = then || null;
+      window.history.back();
+    } else {
+      window.history.replaceState(null, '', '/');
+      if (then) window.setTimeout(then, 0);
+    }
+  }, []);
+
+  useEffect(() => {
+    const onPopState = () => {
+      setRoute(parseRoute(window.location.pathname) || HOME);
+      leaving.current = false;
+      const then = afterLeave.current;
+      afterLeave.current = null;
+      if (then) window.setTimeout(then, 50);
+    };
+    window.addEventListener('popstate', onPopState);
+    return () => window.removeEventListener('popstate', onPopState);
+  }, []);
+
+  // ?signin=1 (from the Google error page) opens the sheet once; don't keep it in the address.
+  useEffect(() => {
+    const url = new URL(window.location.href);
+    if (!url.searchParams.has('signin')) return;
+    url.searchParams.delete('signin');
+    window.history.replaceState(window.history.state, '', `${url.pathname}${url.search}${url.hash}`);
+  }, []);
 
   const loadPortfolio = useCallback(async () => {
     try {
@@ -81,10 +143,13 @@ function Site() {
 
     supabase.auth
       .getSession()
-      .then(({ data: { session } }) => {
-        if (session?.user) void apply(session.user);
+      .then(async ({ data: { session } }) => {
+        if (session?.user) await apply(session.user);
       })
-      .catch(() => undefined);
+      .catch(() => undefined)
+      .finally(() => {
+        if (!cancelled) setAuthReady(true);
+      });
 
     const { data: { subscription } } = supabase.auth.onAuthStateChange((event, session) => {
       if (cancelled) return;
@@ -119,27 +184,47 @@ function Site() {
 
   const openAuth = (view: AuthView = 'signin', intent?: 'booking') => setAuth({ open: true, view, intent });
 
+  // The booking form picks up at the payment step by itself (see Contact).
   const handleAuthSuccess = (nextUser: SessionUser) => {
+    authSucceeded.current = true;
     setUser(nextUser);
     toast.success(`Welcome, ${nextUser.firstName || nextUser.fullName}!`);
-    if (auth.intent === 'booking' && nextUser.role === 'customer') {
-      window.setTimeout(() => scrollToSection('contact'), 150);
+  };
+
+  const closeAuth = () => {
+    setAuth((current) => ({ ...current, open: false }));
+    if (authSucceeded.current) {
+      authSucceeded.current = false;
+      return;
     }
+    if (auth.intent === 'booking') clearBookingResume();
+    // Dismissed the sign-in that /account or /admin asked for: back to the page.
+    if (routeRef.current.view !== 'home') leaveView();
   };
 
   const handleLogout = async () => {
+    leaveView();
     try {
       await supabase.auth.signOut();
     } catch {
       /* sign out locally anyway */
     }
     setUser(GUEST_USER);
-    setProfile({ open: false });
-    setAdminOpen(false);
     toast('Signed out');
   };
 
   const isTeam = TEAM_ROLES.includes(user.role);
+
+  // /account and /admin need an account; /admin needs a studio team account.
+  useEffect(() => {
+    if (!authReady || route.view === 'home') return;
+    if (user.role === 'guest') {
+      setAuth((current) => (current.open ? current : { open: true, view: 'signin' }));
+    } else if (route.view === 'admin' && !isTeam) {
+      toast.error('The dashboard is for the studio team', { id: 'admin-only' });
+      leaveView();
+    }
+  }, [authReady, route.view, user.role, isTeam, leaveView]);
 
   return (
     <div className="App">
@@ -151,8 +236,8 @@ function Site() {
       <Navigation
         user={user}
         onOpenAuth={() => openAuth('signin')}
-        onOpenProfile={() => setProfile({ open: true })}
-        onOpenAdmin={isTeam ? () => setAdminOpen(true) : undefined}
+        onOpenProfile={() => openView('/account')}
+        onOpenAdmin={isTeam ? () => openView('/admin') : undefined}
         onBook={() => goToBooking()}
       />
 
@@ -160,8 +245,7 @@ function Site() {
         <Hero nextOpenDate={nextOpenDate} onBook={() => goToBooking()} />
         <StatsBar />
         <Portfolio items={portfolio} onOpen={(items, index) => setLightbox({ items, index })} />
-        <Services onBook={(serviceId) => goToBooking(serviceId)} />
-        <Pricing onBook={(serviceId, hours) => goToBooking(serviceId, hours)} />
+        <Services items={portfolio} onBook={(serviceId, hours) => goToBooking(serviceId, hours)} />
         <Process onBook={() => goToBooking()} />
         <About />
         <Testimonials />
@@ -193,8 +277,8 @@ function Site() {
               openAuth('signin');
             }}
             onBookSimilar={(serviceId) => {
-              setProfile({ open: false });
-              goToBooking(serviceId);
+              setLightbox(null);
+              leaveView(() => goToBooking(serviceId));
             }}
           />
         )}
@@ -204,25 +288,36 @@ function Site() {
             onClose={() => setSuccess(null)}
             onViewBookings={() => {
               setSuccess(null);
-              setProfile({ open: true, tab: 'bookings' });
+              openView('/account/bookings');
             }}
           />
         )}
-        {auth.open && <Auth isOpen defaultView={auth.view} bookingIntent={auth.intent === 'booking'} onClose={() => setAuth((current) => ({ ...current, open: false }))} onSuccess={handleAuthSuccess} />}
-        {profile.open && user.role !== 'guest' && (
+        {auth.open && <Auth isOpen defaultView={auth.view} bookingIntent={auth.intent === 'booking'} onClose={closeAuth} onSuccess={handleAuthSuccess} />}
+        {route.view === 'account' && user.role !== 'guest' && (
           <UserProfile
             isOpen
-            initialTab={profile.tab}
+            initialTab={route.tab as ProfileTab | undefined}
             user={user}
             catalog={portfolio}
-            onClose={() => setProfile({ open: false })}
+            onClose={() => leaveView()}
             onLogout={handleLogout}
             onUpdateUser={setUser}
-            onBook={() => goToBooking()}
+            onBook={() => leaveView(() => goToBooking())}
             onOpenGallery={(items, index) => setLightbox({ items, index })}
+            onTabChange={(tab) => syncPath(`/account/${tab}`)}
           />
         )}
-        {adminOpen && isTeam && <AdminDashboard user={user} onClose={() => setAdminOpen(false)} onPortfolioUpdated={loadPortfolio} onLogout={handleLogout} />}
+        {route.view === 'admin' && isTeam && (
+          <AdminDashboard
+            user={user}
+            initialTab={route.tab}
+            initialBookingId={route.bookingId}
+            onClose={() => leaveView()}
+            onPortfolioUpdated={loadPortfolio}
+            onLogout={handleLogout}
+            onLocationChange={(tab, bookingId) => syncPath(bookingId ? `/admin/bookings/${encodeURIComponent(bookingId)}` : `/admin/${tab}`)}
+          />
+        )}
       </Suspense>
 
       <Toaster theme="dark" position="top-center" richColors closeButton toastOptions={{ duration: 4500 }} />
@@ -244,5 +339,6 @@ export default function App() {
       </Suspense>
     );
   }
+  if (!parseRoute(window.location.pathname)) return <NotFound />;
   return <Site />;
 }

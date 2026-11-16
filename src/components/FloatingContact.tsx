@@ -1,18 +1,25 @@
 import { useEffect, useState } from 'react';
 import { Mail, MessageCircle, Phone, X } from 'lucide-react';
 import { STUDIO } from '../content/site';
+import { BOTTOM_BAND, useInView } from '../hooks/useInView';
 
-/** Bottom-right quick contact: Messenger, call, email. */
+/** Bottom-right quick contact: Messenger, call, email. Steps aside over the booking form, which has its own contact card. */
 export default function FloatingContact() {
   const [open, setOpen] = useState(false);
-  const [visible, setVisible] = useState(false);
+  const [scrolled, setScrolled] = useState(false);
+  const overBooking = useInView('contact', BOTTOM_BAND);
+  const visible = scrolled && !overBooking;
 
   useEffect(() => {
-    const onScroll = () => setVisible(window.scrollY > 480);
+    const onScroll = () => setScrolled(window.scrollY > 480);
     onScroll();
     window.addEventListener('scroll', onScroll, { passive: true });
     return () => window.removeEventListener('scroll', onScroll);
   }, []);
+
+  useEffect(() => {
+    if (overBooking) setOpen(false);
+  }, [overBooking]);
 
   useEffect(() => {
     if (!open) return;

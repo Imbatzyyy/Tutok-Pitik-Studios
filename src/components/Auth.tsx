@@ -182,6 +182,15 @@ export default function Auth({ isOpen, defaultView = 'signin', onClose, onSucces
     'signup-done': { title: 'Confirm your email', description: `We sent a confirmation link to ${form.email}. Click it, then sign in to continue your booking.`, icon: <MailCheck size={22} /> },
   };
   const heading = titles[stage];
+  const description = bookingIntent && (stage === 'signin' || stage === 'signup')
+    ? 'Your booking details are saved. Sign in or create a free account to pay the downpayment and lock in your date.'
+    : heading.description;
+  const rememberToggle = (
+    <label className="checkbox auth-remember">
+      <input type="checkbox" checked={remember} onChange={(event) => setRemember(event.target.checked)} />
+      <span>Keep me signed in</span>
+    </label>
+  );
   const submitLabel = (label: string) => (
     <>
       {loading && <LoaderCircle size={18} className="spin" />}
@@ -191,7 +200,7 @@ export default function Auth({ isOpen, defaultView = 'signin', onClose, onSucces
 
   return (
     <>
-      <Modal open={isOpen} onClose={onClose} size="sm" className="auth-modal" icon={heading.icon} title={heading.title} description={heading.description} dismissible={!loading}>
+      <Modal open={isOpen} onClose={onClose} size="sm" className="auth-modal" icon={heading.icon} title={heading.title} description={description} dismissible={!loading}>
         {(stage === 'signin' || stage === 'signup') && (
           <div className="auth-tabs" role="tablist" aria-label="Account">
             <button type="button" role="tab" aria-selected={stage === 'signin'} className={stage === 'signin' ? 'is-active' : ''} onClick={() => { setStage('signin'); setErrors({}); }}>
@@ -206,7 +215,6 @@ export default function Auth({ isOpen, defaultView = 'signin', onClose, onSucces
         {errors.general && <div className="notice notice-danger" role="alert"><p>{errors.general}</p></div>}
 
         {(stage === 'signin' || stage === 'signup') && <div className="google-auth-options">
-          <PrivacyHighlight compact onRead={() => setPolicy('privacy')} />
           <button type="button" className="google-signin-button" disabled={loading} onClick={() => { setGoogleAgreed(false); setGoogleReview(true); }}>
             <svg width="20" height="20" viewBox="0 0 48 48" aria-hidden="true">
               <path fill="#EA4335" d="M24 9.5c3.54 0 6.71 1.22 9.21 3.6l6.85-6.85C35.9 2.38 30.47 0 24 0 14.62 0 6.51 5.38 2.56 13.22l7.98 6.19C12.43 13.72 17.74 9.5 24 9.5Z" />
@@ -216,8 +224,7 @@ export default function Auth({ isOpen, defaultView = 'signin', onClose, onSucces
             </svg>
             {loading ? 'Please wait…' : 'Continue with Google'}
           </button>
-          <p className="google-auth-notice">Sign in or create an account using Google’s own screen. We request only your basic profile and email.</p>
-          <label className="checkbox"><input type="checkbox" checked={remember} onChange={(event) => setRemember(event.target.checked)} /><span>Keep me signed in on this device</span></label>
+          <p className="google-auth-notice">Uses Google’s own screen. We only receive your basic profile and email.</p>
           <div className="auth-divider"><span>or use your email</span></div>
         </div>}
 
@@ -230,6 +237,7 @@ export default function Auth({ isOpen, defaultView = 'signin', onClose, onSucces
             </div>
             <PasswordField id="auth-password" label="Password" value={form.password} onChange={set('password')} autoComplete="current-password" error={errors.password} />
             <div className="auth-row">
+              {rememberToggle}
               <button type="button" className="btn-link" onClick={() => { setStage('forgot'); setErrors({}); }}>
                 Forgot password?
               </button>
@@ -273,6 +281,7 @@ export default function Auth({ isOpen, defaultView = 'signin', onClose, onSucces
             </div>
             <PasswordField id="auth-new-password" label="Password" value={form.password} onChange={set('password')} autoComplete="new-password" error={errors.password} hint="At least 8 characters." />
             <PasswordField id="auth-confirm-password" label="Confirm password" value={form.confirmPassword} onChange={set('confirmPassword')} autoComplete="new-password" error={errors.confirmPassword} />
+            <div className="auth-row">{rememberToggle}</div>
             <label className="checkbox checkbox-block agreement-box">
               <input type="checkbox" aria-describedby="signup-agreement-help" aria-invalid={Boolean(errors.agreed)} checked={agreed} onChange={(event) => { setAgreed(event.target.checked); setErrors((current) => ({ ...current, agreed: '' })); }} />
               <span>
@@ -305,6 +314,8 @@ export default function Auth({ isOpen, defaultView = 'signin', onClose, onSucces
           </form>
         )}
 
+        {(stage === 'signin' || stage === 'signup') && <PrivacyHighlight compact onRead={() => setPolicy('privacy')} />}
+
         {(stage === 'forgot-sent' || stage === 'signup-done') && (
           <div className="auth-form">
             <button type="button" className="btn btn-primary btn-block" onClick={() => { setStage('signin'); setErrors({}); }} data-autofocus>
@@ -324,6 +335,7 @@ export default function Auth({ isOpen, defaultView = 'signin', onClose, onSucces
         footer={<><button type="button" className="btn btn-ghost" disabled={loading} onClick={() => setGoogleReview(false)}>Cancel</button><button type="button" className="btn btn-primary" disabled={!googleAgreed || loading} onClick={googleSignIn}>{loading ? 'Please wait…' : 'Continue to Google'}</button></>}
       >
         <PrivacyHighlight compact onRead={() => setPolicy('privacy')} />
+        <div className="auth-row auth-row-google">{rememberToggle}</div>
         <label className="checkbox checkbox-block agreement-box">
           <input type="checkbox" checked={googleAgreed} aria-describedby="google-agreement-help" onChange={(event) => setGoogleAgreed(event.target.checked)} />
           <span>I agree to the <button type="button" className="btn-link" onClick={() => setPolicy('terms')}>Terms and Conditions</button> and acknowledge that I have read the <button type="button" className="btn-link" onClick={() => setPolicy('privacy')}>Data Privacy Notice (RA 10173)</button>.</span>

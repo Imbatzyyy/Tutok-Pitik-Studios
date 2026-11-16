@@ -19,6 +19,11 @@ interface AdminDashboardProps {
   onClose: () => void;
   onPortfolioUpdated?: () => Promise<void> | void;
   onLogout: () => void;
+  /** From the URL: /admin/<tab> or /admin/bookings/<id>. */
+  initialTab?: string;
+  initialBookingId?: string;
+  /** Keeps the address bar in step with the open tab and booking. */
+  onLocationChange?: (tab: AdminTabId, bookingId?: string | null) => void;
 }
 
 const NAV: { id: AdminTabId; label: string; icon: LucideIcon }[] = [
@@ -32,10 +37,19 @@ const NAV: { id: AdminTabId; label: string; icon: LucideIcon }[] = [
 
 export type LoadState = 'loading' | 'ready' | 'error';
 
-export default function AdminDashboard({ user, onClose, onPortfolioUpdated, onLogout }: AdminDashboardProps) {
+export default function AdminDashboard({ user, onClose, onPortfolioUpdated, onLogout, initialTab, initialBookingId, onLocationChange }: AdminDashboardProps) {
   const tabs = useMemo(() => NAV.filter((tab) => canAccess(user.role, tab.id)), [user.role]);
-  const [active, setActive] = useState<AdminTabId>(tabs[0]?.id || 'bookings');
-  const [focusBookingId, setFocusBookingId] = useState<string | null>(null);
+  const [active, setActive] = useState<AdminTabId>(() => {
+    const requested = initialBookingId ? 'bookings' : initialTab;
+    return tabs.find((tab) => tab.id === requested)?.id || tabs[0]?.id || 'bookings';
+  });
+  const [focusBookingId, setFocusBookingId] = useState<string | null>(initialBookingId && canAccess(user.role, 'bookings') ? initialBookingId : null);
+  const [openBookingId, setOpenBookingId] = useState<string | null>(null);
+
+  useEffect(() => {
+    onLocationChange?.(active, active === 'bookings' ? openBookingId || focusBookingId : null);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [active, openBookingId]);
   const ref = useModal<HTMLDivElement>(true, undefined, { autoFocus: false });
 
   const [bookings, setBookings] = useState<NormalizedBooking[]>([]);
@@ -159,6 +173,7 @@ export default function AdminDashboard({ user, onClose, onPortfolioUpdated, onLo
             onRemove={removeBooking}
             focusId={focusBookingId}
             onFocusHandled={() => setFocusBookingId(null)}
+            onOpenChange={setOpenBookingId}
           />
         )}
         {active === 'users' && <UsersTab currentUser={user} users={users} state={usersState} onReload={loadUsers} />}

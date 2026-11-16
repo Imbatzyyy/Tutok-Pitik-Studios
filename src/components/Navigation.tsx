@@ -108,7 +108,7 @@ export default function Navigation({ user, onOpenAuth, onOpenProfile, onOpenAdmi
   );
 
   return (
-    <header className={`site-nav ${scrolled || menuOpen ? 'is-solid' : ''} ${menuOpen ? 'is-open' : ''}`}>
+    <header className={`site-nav ${scrolled || menuOpen ? 'is-solid' : ''} ${menuOpen ? 'is-open' : ''} ${activeSection === 'contact' ? 'is-in-booking' : ''}`}>
       <div className="site-nav-bar">
         <a href="#home" className="site-nav-logo" onClick={(event) => handleSectionLinkClick(event, '#home', closeMenu)} aria-label={`${STUDIO.name} home`}>
           <img src={logoImage} alt={STUDIO.name} width={64} height={64} />

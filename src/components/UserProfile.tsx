@@ -26,6 +26,8 @@ interface UserProfileProps {
   onUpdateUser: (user: SessionUser) => void;
   onBook: () => void;
   onOpenGallery: (items: PortfolioItem[], index: number) => void;
+  /** Keeps /account/<tab> in the address bar in step with the open tab. */
+  onTabChange?: (tab: ProfileTab) => void;
 }
 
 const STEPS = ['Requested', 'Confirmed', 'Shoot day', 'Photos delivered'];
@@ -257,9 +259,16 @@ function AvatarCropper({ source, onCancel, onSave }: { source: string; onCancel:
   );
 }
 
-export default function UserProfile({ isOpen, initialTab, user, catalog, onClose, onLogout, onUpdateUser, onBook, onOpenGallery }: UserProfileProps) {
+export default function UserProfile({ isOpen, initialTab, user, catalog, onClose, onLogout, onUpdateUser, onBook, onOpenGallery, onTabChange }: UserProfileProps) {
   const isCustomer = user.role === 'customer';
-  const [tab, setTab] = useState<ProfileTab>(initialTab || (isCustomer ? 'bookings' : 'account'));
+  // Team accounts only have the Account tab.
+  const startTab: ProfileTab = isCustomer ? initialTab || 'bookings' : 'account';
+  const [tab, setTab] = useState<ProfileTab>(startTab);
+
+  useEffect(() => {
+    if (isOpen) onTabChange?.(tab);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [isOpen, tab]);
   const [bookings, setBookings] = useState<NormalizedBooking[] | null>(null);
   const [receipt, setReceipt] = useState<{ url: string; name: string } | null>(null);
   const [form, setForm] = useState({ firstName: user.firstName, lastName: user.lastName, phone: user.phone });
@@ -271,7 +280,7 @@ export default function UserProfile({ isOpen, initialTab, user, catalog, onClose
 
   useEffect(() => {
     if (!isOpen) return;
-    setTab(initialTab || (isCustomer ? 'bookings' : 'account'));
+    setTab(startTab);
     setForm({ firstName: user.firstName, lastName: user.lastName, phone: user.phone });
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [isOpen, initialTab]);

@@ -1,11 +1,12 @@
 import { useEffect, useMemo, useState } from 'react';
-import { CalendarDays, ChevronLeft, ChevronRight, FileDown, Inbox, List, LoaderCircle, RefreshCw, Search } from 'lucide-react';
+import { CalendarDays, ChevronLeft, ChevronRight, ExternalLink, FileDown, Inbox, List, LoaderCircle, RefreshCw, Search, TriangleAlert } from 'lucide-react';
 import { toast } from 'sonner';
 import ConfirmDialog from '../common/ConfirmDialog';
 import BookingDetail from './BookingDetail';
 import { errorMessage } from '../../lib/api';
 import { BOOKING_STATUSES, paymentLabel, paymentTone, statusLabel, statusTone, type BookingStatus, type NormalizedBooking } from '../../lib/bookings';
-import { formatDateShort, formatPeso, formatTime, toDateKey } from '../../lib/format';
+import { formatDateShort, formatPeso, formatPesoExact, formatTime, toDateKey } from '../../lib/format';
+import { resolveReceiptUrl } from '../../lib/images';
 import type { SessionUser } from '../../lib/session';
 import { SERVICES } from '../../content/site';
 import { includesText, saveBooking, todayKey } from './shared';
@@ -20,6 +21,8 @@ interface BookingsTabProps {
   onRemove: (id: string) => void;
   focusId: string | null;
   onFocusHandled: () => void;
+  /** Called with the booking that is open in the detail panel (or null), to keep the URL in sync. */
+  onOpenChange?: (id: string | null) => void;
 }
 
 type SortKey = 'newest' | 'shoot-asc' | 'shoot-desc' | 'upcoming';
@@ -30,7 +33,7 @@ const NEXT_STEP: Partial<Record<BookingStatus, { status: BookingStatus; label: s
   confirmed: { status: 'completed', label: 'Mark done' },
 };
 
-export default function BookingsTab({ user, bookings, state, onReload, onReplace, onRemove, focusId, onFocusHandled }: BookingsTabProps) {
+export default function BookingsTab({ user, bookings, state, onReload, onReplace, onRemove, focusId, onFocusHandled, onOpenChange }: BookingsTabProps) {
   const [view, setView] = useState<'list' | 'calendar'>('list');
   const [query, setQuery] = useState('');
   const [status, setStatus] = useState<'all' | BookingStatus>('all');
@@ -40,6 +43,26 @@ export default function BookingsTab({ user, bookings, state, onReload, onReplace
   const [openId, setOpenId] = useState<string | null>(null);
   const [quick, setQuick] = useState<{ booking: NormalizedBooking; status: BookingStatus } | null>(null);
   const [exporting, setExporting] = useState(false);
+  const [quickReceipt, setQuickReceipt] = useState<{ state: 'loading' | 'ready' | 'none'; url: string | null }>({ state: 'none', url: null });
+  const confirming = quick?.status === 'confirmed';
+
+  useEffect(() => {
+    onOpenChange?.(openId);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [openId]);
+
+  // A quick "Confirm" verifies the payment, so show the proof right in the dialog.
+  useEffect(() => {
+    if (!quick || quick.status !== 'confirmed') return;
+    let cancelled = false;
+    setQuickReceipt({ state: 'loading', url: null });
+    resolveReceiptUrl(quick.booking)
+      .then((url) => !cancelled && setQuickReceipt({ state: url ? 'ready' : 'none', url }))
+      .catch(() => !cancelled && setQuickReceipt({ state: 'none', url: null }));
+    return () => {
+      cancelled = true;
+    };
+  }, [quick]);
 
   useEffect(() => {
     if (focusId) {
@@ -290,15 +313,45 @@ export default function BookingsTab({ user, bookings, state, onReload, onReplace
         title={quick?.status === 'confirmed' ? 'Confirm this booking?' : 'Mark this shoot as done?'}
         message={
           quick
-            ? quick.status === 'confirmed'
-              ? `${quick.booking.fullName} · ${quick.booking.service} on ${quick.booking.dateDisplay}. This marks the GCash downpayment as verified and emails the client.`
+            ? confirming
+              ? `${quick.booking.fullName} · ${quick.booking.service} on ${quick.booking.dateDisplay}. Check the payment below. Confirming marks the downpayment as verified and emails the client.`
               : `${quick.booking.fullName} · ${quick.booking.service} on ${quick.booking.dateDisplay}. An official receipt number is issued and photo status starts at Editing.`
             : ''
         }
-        confirmLabel={quick?.status === 'confirmed' ? 'Confirm booking' : 'Mark done'}
+        confirmLabel={confirming ? 'Payment checked, confirm' : 'Mark done'}
         onConfirm={runQuick}
         onCancel={() => setQuick(null)}
-      />
+      >
+        {quick && confirming && (
+          <div className="quick-payment">
+            <dl className="confirm-list">
+              <div><dt>Expected downpayment</dt><dd>{formatPesoExact(quick.booking.downpaymentAmount)}</dd></div>
+              <div><dt>GCash reference</dt><dd className="mono">{quick.booking.paymentReference || '—'}</dd></div>
+              <div><dt>Payment status</dt><dd>{paymentLabel(quick.booking.paymentStatus)}</dd></div>
+            </dl>
+            <div className="bd-receipt quick-receipt">
+              {quickReceipt.state === 'loading' && (
+                <span className="bd-receipt-empty">
+                  <LoaderCircle size={16} className="spin" /> Loading receipt…
+                </span>
+              )}
+              {quickReceipt.state === 'none' && (
+                <span className="bd-receipt-empty quick-receipt-missing">
+                  <TriangleAlert size={16} aria-hidden="true" /> No receipt uploaded. Check GCash before confirming.
+                </span>
+              )}
+              {quickReceipt.state === 'ready' && quickReceipt.url && (
+                <a href={quickReceipt.url} target="_blank" rel="noreferrer" title="Open receipt in a new tab">
+                  <img src={quickReceipt.url} alt={`Payment receipt for ${quick.booking.reference}`} />
+                  <span>
+                    <ExternalLink size={14} aria-hidden="true" /> Open full size
+                  </span>
+                </a>
+              )}
+            </div>
+          </div>
+        )}
+      </ConfirmDialog>
     </section>
   );
 }
