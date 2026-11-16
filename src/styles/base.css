@@ -340,6 +340,18 @@ section[id] {
     background: rgba(255, 255, 255, 0.06);
 }
 
+/* Quiet bordered button for secondary actions, in both the dark site and the light workspace. */
+.btn-secondary {
+    border-color: var(--border-strong);
+    background: var(--surface-1);
+    color: var(--text);
+}
+
+.btn-secondary:hover:not(:disabled) {
+    border-color: var(--text);
+    background: var(--surface-2);
+}
+
 .btn-ghost {
     color: var(--text-soft);
     background: rgba(255, 255, 255, 0.06);

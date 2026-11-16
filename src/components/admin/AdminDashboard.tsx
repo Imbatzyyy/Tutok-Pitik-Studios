@@ -1,15 +1,43 @@
-import { OperationsOverview,OperationsBookings,OperationsClients,OperationsReports,OperationsNotifications,OperationsSchedule,OperationsSecurity,OperationsTeam } from './OperationsViews';
-import { useStudioLive,confirmNavigation,hasUnsavedChanges } from '../../lib/studio';
-import '../../styles/studio-operations.css';
 import { useCallback, useEffect, useMemo, useState } from 'react';
-import { CalendarDays, CalendarOff, ChartColumn, Images, LogOut, MessageSquareQuote, Users, X, Menu, ArrowUpRight, RefreshCw, Wallet, Activity, Inbox, UserRound, type LucideIcon } from 'lucide-react';
-import { useModal } from '../../hooks/useModal';
+import {
+  ArrowUpRight,
+  Bell,
+  CalendarDays,
+  CalendarOff,
+  ChartColumn,
+  History,
+  Images,
+  Inbox,
+  LayoutDashboard,
+  LogOut,
+  Menu,
+  MessageSquareQuote,
+  RefreshCw,
+  ShieldCheck,
+  UserRound,
+  Users,
+  Wallet,
+  X,
+  type LucideIcon,
+} from 'lucide-react';
 import logo from '../../assets/logo-160.png';
-import { ActivityView, InboxView } from './StudioViews';
+import { useModal } from '../../hooks/useModal';
 import { initials } from '../../lib/format';
 import type { SessionUser } from '../../lib/session';
-import AvailabilityTab from './AvailabilityTab';
+import { confirmNavigation, hasUnsavedChanges, rpc, useStudioLive, type BookingTab } from '../../lib/studio';
+import { supabase } from '../../lib/supabase';
+import '../../styles/studio-operations.css';
 import ConfirmDialog from '../common/ConfirmDialog';
+import ActivityView from './operations/ActivityView';
+import BookingsView from './operations/BookingsView';
+import ClientsView from './operations/ClientsView';
+import InboxView, { inboxSeenAt } from './operations/InboxView';
+import NotificationsView from './operations/NotificationsView';
+import OverviewView, { type BookingPreset } from './operations/OverviewView';
+import ReportsView from './operations/ReportsView';
+import ScheduleView from './operations/ScheduleView';
+import SecurityView from './operations/SecurityView';
+import TeamView from './operations/TeamView';
 import PortfolioTab from './PortfolioTab';
 import TestimonialsTab from './TestimonialsTab';
 import { canAccess, ROLE_LABELS, type AdminTabId } from './shared';
@@ -26,132 +54,293 @@ interface AdminDashboardProps {
   onLocationChange?: (tab: AdminTabId, bookingId?: string | null) => void;
 }
 
-const NAV: { id: AdminTabId; label: string; icon: LucideIcon }[] = [
-  { id: 'overview', label: 'Overview', icon: ChartColumn },
-  { id: 'bookings', label: 'Bookings', icon: CalendarDays },
-  { id: 'payments', label: 'Payments', icon: Wallet },
-  { id: 'customers', label: 'Clients', icon: UserRound },
-  { id: 'users', label: 'Accounts & roles', icon: Users },
-  { id: 'portfolio', label: 'Portfolio', icon: Images },
-  { id: 'availability', label: 'Availability', icon: CalendarOff },
-  { id: 'reviews', label: 'Testimonials', icon: MessageSquareQuote },
-  { id: 'inbox', label: 'Inquiries', icon: Inbox },
-  { id: 'notifications', label: 'Notifications', icon: Inbox },
-  { id: 'reports', label: 'Reports', icon: ChartColumn },
-  { id: 'security', label: 'Security & health', icon: Activity },
-  { id: 'activity', label: 'Activity', icon: Activity },
+type NavItem = { id: AdminTabId; label: string; icon: LucideIcon };
+const NAV_GROUPS: { title: string; items: NavItem[] }[] = [
+  {
+    title: 'Daily work',
+    items: [
+      { id: 'overview', label: 'Overview', icon: LayoutDashboard },
+      { id: 'bookings', label: 'Bookings', icon: CalendarDays },
+      { id: 'payments', label: 'Payments', icon: Wallet },
+      { id: 'customers', label: 'Clients', icon: UserRound },
+    ],
+  },
+  {
+    title: 'Messages',
+    items: [
+      { id: 'inbox', label: 'Inquiries', icon: Inbox },
+      { id: 'notifications', label: 'Notifications', icon: Bell },
+    ],
+  },
+  {
+    title: 'Studio',
+    items: [
+      { id: 'availability', label: 'Availability', icon: CalendarOff },
+      { id: 'portfolio', label: 'Portfolio', icon: Images },
+      { id: 'reviews', label: 'Testimonials', icon: MessageSquareQuote },
+    ],
+  },
+  {
+    title: 'Insights & admin',
+    items: [
+      { id: 'reports', label: 'Reports', icon: ChartColumn },
+      { id: 'activity', label: 'Activity', icon: History },
+      { id: 'security', label: 'Security & health', icon: ShieldCheck },
+      { id: 'users', label: 'Accounts & roles', icon: Users },
+    ],
+  },
 ];
+const ALL_ITEMS = NAV_GROUPS.flatMap((group) => group.items);
+const BADGE_HINTS: Partial<Record<AdminTabId, string>> = { bookings: 'pending', payments: 'to review', inbox: 'new', notifications: 'unread' };
+const presetFor = (tab: AdminTabId): BookingPreset => (tab === 'payments' ? { view: 'payments' } : {});
 
-export type LoadState = 'loading' | 'ready' | 'error';
+type Counts = Partial<Record<AdminTabId, number>>;
 
 export default function AdminDashboard({ user, onClose, onPortfolioUpdated, onLogout, initialTab, initialBookingId, onLocationChange }: AdminDashboardProps) {
-  const tabs = useMemo(() => NAV.filter((tab) => canAccess(user.role, tab.id)), [user.role]);
+  const allowed = useCallback((id: AdminTabId) => canAccess(user.role, id), [user.role]);
+  const groups = useMemo(() => NAV_GROUPS.map((group) => ({ ...group, items: group.items.filter((item) => allowed(item.id)) })).filter((group) => group.items.length), [allowed]);
   const [active, setActive] = useState<AdminTabId>(() => {
-    const requested = initialBookingId ? 'bookings' : initialTab;
-    return tabs.find((tab) => tab.id === requested)?.id || tabs[0]?.id || 'bookings';
+    const requested = (initialBookingId ? 'bookings' : initialTab) as AdminTabId | undefined;
+    return requested && allowed(requested) ? requested : groups[0]?.items[0]?.id || 'bookings';
   });
-  const [focusBookingId, setFocusBookingId] = useState<string | null>(initialBookingId && canAccess(user.role, 'bookings') ? initialBookingId : null);
+  const [preset, setPreset] = useState(() => ({ key: 0, filters: presetFor(active) }));
+  const [focusBookingId, setFocusBookingId] = useState<string | null>(initialBookingId && allowed('bookings') ? initialBookingId : null);
+  const [focusTab, setFocusTab] = useState<BookingTab | undefined>();
   const [openBookingId, setOpenBookingId] = useState<string | null>(null);
+  const [menuOpen, setMenuOpen] = useState(false);
+  const [logoutOpen, setLogoutOpen] = useState(false);
+  const [logoutHasChanges, setLogoutHasChanges] = useState(false);
+  const [revision, setRevision] = useState(0);
+  const [counts, setCounts] = useState<Counts>({});
+  const menuRef = useModal<HTMLElement>(menuOpen, () => setMenuOpen(false));
+
+  const refresh = useCallback(() => setRevision((n) => n + 1), []);
+  const live = useStudioLive(user.id, true, refresh);
 
   useEffect(() => {
-    onLocationChange?.(active, active === 'bookings' ? openBookingId || focusBookingId : null);
+    onLocationChange?.(active, active === 'bookings' || active === 'payments' ? openBookingId || focusBookingId : null);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [active, openBookingId]);
-  const [menuOpen,setMenuOpen]=useState(false);
-  const [logoutOpen,setLogoutOpen]=useState(false);
-  const [logoutHasChanges,setLogoutHasChanges]=useState(false);
-  const menuRef=useModal<HTMLElement>(menuOpen,()=>setMenuOpen(false));
-  useEffect(()=>{const resize=()=>{if(window.innerWidth>960)setMenuOpen(false);};window.addEventListener('resize',resize);return()=>window.removeEventListener('resize',resize);},[]);
-  const [revision,setRevision]=useState(0);
-  const [bookingView,setBookingView]=useState('');
-  const refresh=useCallback(()=>setRevision(n=>n+1),[]);
-  const live=useStudioLive(user.id,true,refresh);
-  const openBooking=(id:string)=>{setFocusBookingId(id);setOpenBookingId(id);setActive('bookings');};
-  const openView=(view:string)=>{setBookingView(view);setFocusBookingId(null);setOpenBookingId(null);setActive('bookings');};
-  const pendingCount=0;
+
+  useEffect(() => {
+    const resize = () => {
+      if (window.innerWidth > 960) setMenuOpen(false);
+    };
+    window.addEventListener('resize', resize);
+    return () => window.removeEventListener('resize', resize);
+  }, []);
+
+  // Sidebar counters: what is waiting in each section. Each one fails quietly on its own.
+  const loadCounts = useCallback(async () => {
+    const next: Counts = {};
+    const jobs: Promise<void>[] = [
+      rpc<Record<string, number>>('studio_overview').then((o) => {
+        next.bookings = Number(o?.pending) || 0;
+        next.payments = Number(o?.unreviewed) || 0;
+      }),
+      Promise.resolve(supabase.from('studio_notifications').select('id').is('read_at', null).limit(100)).then(({ data, error }) => {
+        if (!error) next.notifications = data?.length || 0;
+      }),
+    ];
+    if (canAccess(user.role, 'inbox')) {
+      const since = inboxSeenAt() || new Date(Date.now() - 7 * 864e5).toISOString();
+      jobs.push(
+        Promise.resolve(supabase.from('contact_messages').select('id').gt('created_at', since).limit(100)).then(({ data, error }) => {
+          if (!error) next.inbox = data?.length || 0;
+        })
+      );
+    }
+    await Promise.allSettled(jobs);
+    setCounts(next);
+  }, [user.role]);
+
+  useEffect(() => {
+    void loadCounts();
+  }, [loadCounts, revision]);
+
+  const onInboxSeen = useCallback(() => setCounts((c) => ({ ...c, inbox: 0 })), []);
+  const onNotificationsRead = useCallback(() => void loadCounts(), [loadCounts]);
+
+  const go = async (id: AdminTabId) => {
+    if (!(await confirmNavigation())) return;
+    setActive(id);
+    setMenuOpen(false);
+    setFocusBookingId(null);
+    setFocusTab(undefined);
+    setOpenBookingId(null);
+    if (id === 'bookings' || id === 'payments') setPreset((p) => ({ key: p.key + 1, filters: presetFor(id) }));
+    document.getElementById('admin-main')?.focus({ preventScroll: true });
+    window.scrollTo({ top: 0 });
+  };
+
+  const openBooking = (id: string, tab?: BookingTab) => {
+    setFocusBookingId(id);
+    setFocusTab(tab);
+    setOpenBookingId(id);
+    setActive((current) => (current === 'payments' ? 'payments' : 'bookings'));
+    window.scrollTo({ top: 0 });
+  };
+
+  const openView = (filters: BookingPreset) => {
+    setFocusBookingId(null);
+    setFocusTab(undefined);
+    setOpenBookingId(null);
+    setPreset((p) => ({ key: p.key + 1, filters }));
+    setActive('bookings');
+    window.scrollTo({ top: 0 });
+  };
+
+  const leave = async () => {
+    if (await confirmNavigation()) onClose();
+  };
+
+  const current = ALL_ITEMS.find((item) => item.id === active);
+  const roleLabel = ROLE_LABELS[user.role] || user.role;
+  const avatar = user.profilePicture ? <img src={user.profilePicture} alt="" /> : initials(user.fullName);
+  const badge = (n?: number) => (n && n > 99 ? '99+' : String(n || ''));
 
   return (
-    <div className={`admin-shell studio-workspace ${menuOpen?'studio-menu-open':''}`}>
-      <a className="skip-link" href="#admin-main">Skip to workspace</a>
-      {menuOpen&&<button className="studio-nav-backdrop" aria-label="Close navigation" onClick={()=>setMenuOpen(false)}/>}
+    <div className={`admin-shell studio-workspace ${menuOpen ? 'studio-menu-open' : ''}`}>
+      <a className="skip-link" href="#admin-main">
+        Skip to workspace
+      </a>
+      {menuOpen && <button type="button" className="studio-nav-backdrop" aria-label="Close navigation" onClick={() => setMenuOpen(false)} />}
+
       <aside ref={menuRef} className="admin-sidebar" aria-label="Studio navigation">
         <div className="admin-brand">
-          <img className="studio-brand-logo" src={logo} alt=""/>
+          <img className="studio-brand-logo" src={logo} alt="" />
           <div>
             <strong>Tutok Pitik</strong>
-            <span>STUDIO WORKSPACE</span>
+            <span>Studio workspace</span>
           </div>
-          <button type="button" className="icon-btn admin-close-mobile" onClick={()=>setMenuOpen(false)} aria-label="Close navigation">
+          <button type="button" className="icon-btn admin-close-mobile" onClick={() => setMenuOpen(false)} aria-label="Close navigation">
             <X size={20} />
           </button>
         </div>
 
-        <p className="studio-nav-label">WORKSPACE</p>
-        <nav className="admin-nav" aria-label="Dashboard sections">
-          {tabs.map(({ id, label, icon: Icon }) => (
-            <button
-              key={id}
-              type="button"
-              className={active === id ? 'is-active' : ''}
-              aria-current={active === id ? 'page' : undefined}
-              onClick={() => {if(!confirmNavigation())return;setActive(id);setMenuOpen(false);setFocusBookingId(null);setOpenBookingId(null);}}
-            >
-              <Icon size={18} />
-              <span>{label}</span>
-              {id === 'bookings' && pendingCount > 0 && (
-                <span className="admin-nav-count" aria-label={`${pendingCount} pending`}>
-                  {pendingCount}
-                </span>
-              )}
-            </button>
+        <nav className="admin-nav" aria-label="Workspace sections">
+          {groups.map((group) => (
+            <div className="admin-nav-group" key={group.title}>
+              <p className="studio-nav-label">{group.title}</p>
+              {group.items.map(({ id, label, icon: Icon }) => {
+                const count = counts[id] || 0;
+                return (
+                  <button key={id} type="button" className={active === id ? 'is-active' : ''} aria-current={active === id ? 'page' : undefined} onClick={() => void go(id)}>
+                    <Icon size={18} aria-hidden="true" />
+                    <span>{label}</span>
+                    {count > 0 && (
+                      <span className={`admin-nav-count ${id === 'payments' || id === 'bookings' ? 'is-urgent' : ''}`} aria-label={`${count} ${BADGE_HINTS[id] || ''}`}>
+                        {badge(count)}
+                      </span>
+                    )}
+                  </button>
+                );
+              })}
+            </div>
           ))}
         </nav>
 
         <div className="admin-sidebar-foot">
           <div className="admin-me">
-            <span className="avatar">
-              {user.profilePicture ? <img src={user.profilePicture} alt="" /> : initials(user.fullName)}
-            </span>
+            <span className="avatar">{avatar}</span>
             <div>
               <strong>{user.fullName}</strong>
-              <span>{ROLE_LABELS[user.role]}</span>
+              <span>{roleLabel}</span>
             </div>
           </div>
-          <button type="button" className="btn btn-ghost btn-sm btn-block" onClick={()=>{if(confirmNavigation())onClose();}}>
-            <ArrowUpRight size={16} /> View customer website
-          </button>
-          <button type="button" className="btn btn-ghost btn-sm btn-block admin-signout" onClick={()=>{setLogoutHasChanges(hasUnsavedChanges());setLogoutOpen(true);}}>
-            <LogOut size={16} /> Sign out
-          </button>
+          <div className="admin-foot-actions">
+            <button type="button" className="btn btn-ghost btn-sm" onClick={() => void leave()}>
+              <ArrowUpRight size={16} aria-hidden="true" /> Website
+            </button>
+            <button
+              type="button"
+              className="btn btn-ghost btn-sm admin-signout"
+              onClick={() => {
+                setLogoutHasChanges(hasUnsavedChanges());
+                setLogoutOpen(true);
+              }}
+            >
+              <LogOut size={16} aria-hidden="true" /> Sign out
+            </button>
+          </div>
         </div>
       </aside>
 
-      <div className="studio-workspace-body"><header className="studio-topbar"><div><button className="icon-btn studio-menu-toggle" aria-label="Open navigation" aria-expanded={menuOpen} onClick={()=>setMenuOpen(true)}><Menu size={21}/></button><span className="studio-breadcrumb">Workspace <span>/</span> <strong>{NAV.find(t=>t.id===active)?.label}</strong></span></div><div className="studio-topbar-actions"><span className={`studio-sync ops-live-${live.toLowerCase()}`} role="status"><i/>{live}</span><button className="icon-btn" aria-label="Refresh data" onClick={refresh}><RefreshCw size={17}/></button><span className="studio-role">{ROLE_LABELS[user.role]}</span><span className="avatar studio-topbar-avatar">{initials(user.fullName)}</span></div></header>
-      <main className="admin-main" id="admin-main" tabIndex={-1}>
-        {active==='overview'&&<OperationsOverview user={user} revision={revision} onOpen={openBooking} onView={openView}/>}
-        {(active==='bookings'||active==='payments')&&<OperationsBookings user={user} revision={revision} focusId={focusBookingId} initialView={active==='payments'?'payments':bookingView} onOpenChange={id=>{setOpenBookingId(id);if(!id)setFocusBookingId(null);}}/>}
-        {active==='customers'&&<OperationsClients revision={revision} onOpen={openBooking}/>}
-        {active==='reports'&&<OperationsReports revision={revision}/>}
-        {active==='notifications'&&<OperationsNotifications revision={revision} admin={user.role!=='staff'} onOpen={openBooking}/>}
-        {active==='security'&&<OperationsSecurity user={user} revision={revision}/>}
-        {active==='users'&&<OperationsTeam user={user} revision={revision}/>}
-        {active==='activity'&&<ActivityView key={revision} onOpen={openBooking}/>}
-        {active==='inbox'&&<InboxView key={revision}/>}
-        {active==='portfolio'&&<PortfolioTab user={user} onChanged={onPortfolioUpdated}/>}
-        {active==='availability'&&<><OperationsSchedule revision={revision}/><AvailabilityTab bookings={[]}/></>}
-        {active==='reviews'&&<TestimonialsTab/>}
-      </main><footer className="studio-workspace-footer"><span>Tutok Pitik Studios · Made for meaningful moments</span><span>Times shown in Manila · Private live updates</span></footer></div>
+      <div className="studio-workspace-body">
+        <header className="studio-topbar">
+          <div>
+            <button type="button" className="icon-btn studio-menu-toggle" aria-label="Open navigation" aria-expanded={menuOpen} onClick={() => setMenuOpen(true)}>
+              <Menu size={21} />
+            </button>
+            <span className="studio-breadcrumb">
+              <span className="studio-breadcrumb-root">Workspace</span>
+              <span aria-hidden="true" className="studio-breadcrumb-root">
+                /
+              </span>{' '}
+              <strong>{current?.label}</strong>
+            </span>
+          </div>
+          <div className="studio-topbar-actions">
+            <span className={`studio-sync ops-live-${live.toLowerCase()}`} role="status" title="Live updates">
+              <i aria-hidden="true" />
+              <span>{live}</span>
+            </span>
+            <button type="button" className="icon-btn" aria-label="Refresh data" title="Refresh data" onClick={refresh}>
+              <RefreshCw size={17} />
+            </button>
+            <span className="studio-role">{roleLabel}</span>
+            <span className="avatar studio-topbar-avatar" title={user.fullName}>
+              {avatar}
+            </span>
+          </div>
+        </header>
+
+        <main className="admin-main" id="admin-main" tabIndex={-1}>
+          {active === 'overview' && <OverviewView user={user} revision={revision} onOpen={openBooking} onView={openView} onNavigate={(tab) => void go(tab)} />}
+          {(active === 'bookings' || active === 'payments') && (
+            <BookingsView
+              user={user}
+              revision={revision}
+              preset={preset}
+              mode={active}
+              focusId={focusBookingId}
+              focusTab={focusTab}
+              onOpenChange={(id) => {
+                setOpenBookingId(id);
+                if (!id) {
+                  setFocusBookingId(null);
+                  setFocusTab(undefined);
+                }
+              }}
+            />
+          )}
+          {active === 'customers' && <ClientsView revision={revision} onOpen={openBooking} />}
+          {active === 'reports' && <ReportsView revision={revision} />}
+          {active === 'notifications' && <NotificationsView revision={revision} admin={user.role !== 'staff'} onOpen={openBooking} onRead={onNotificationsRead} />}
+          {active === 'security' && <SecurityView user={user} revision={revision} />}
+          {active === 'users' && <TeamView user={user} revision={revision} />}
+          {active === 'activity' && <ActivityView key={revision} onOpen={openBooking} />}
+          {active === 'inbox' && <InboxView key={revision} onSeen={onInboxSeen} />}
+          {active === 'portfolio' && <PortfolioTab user={user} onChanged={onPortfolioUpdated} />}
+          {active === 'availability' && <ScheduleView revision={revision} />}
+          {active === 'reviews' && <TestimonialsTab />}
+        </main>
+
+        <footer className="studio-workspace-footer">
+          <span>Tutok Pitik Studios · Studio workspace</span>
+          <span>Times shown in Manila (PHT)</span>
+        </footer>
+      </div>
+
       <ConfirmDialog
         open={logoutOpen}
         title="Sign out of the workspace?"
-        message={logoutHasChanges
-          ? 'You have unsaved changes. Signing out will discard them. You’ll need to sign in again to access your workspace.'
-          : 'You’ll need to sign in again to access your studio workspace.'}
+        message={logoutHasChanges ? 'You have unsaved changes. Signing out will discard them. You’ll need to sign in again to open the workspace.' : 'You’ll need to sign in again to open the studio workspace.'}
         confirmLabel="Sign out"
         cancelLabel="Cancel"
         autoFocus="cancel"
         icon={<LogOut size={22} />}
-        onCancel={()=>setLogoutOpen(false)}
+        onCancel={() => setLogoutOpen(false)}
         onConfirm={onLogout}
       />
     </div>

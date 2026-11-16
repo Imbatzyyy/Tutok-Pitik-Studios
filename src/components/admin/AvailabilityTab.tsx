@@ -3,10 +3,10 @@ import { CalendarOff, CalendarX, Database, LoaderCircle, Plus, RefreshCw, Trash2
 import { toast } from 'sonner';
 import ConfirmDialog from '../common/ConfirmDialog';
 import { errorMessage, isMissingRelation } from '../../lib/api';
-import { isActiveBooking, type NormalizedBooking } from '../../lib/bookings';
 import { formatDateLong, parseDateKey, toDateKey } from '../../lib/format';
+import { rpc } from '../../lib/studio';
 import { supabase } from '../../lib/supabase';
-import { todayKey } from './shared';
+import { addDaysKey, todayKey } from './shared';
 
 interface BlockedDate {
   id: string;
@@ -15,8 +15,28 @@ interface BlockedDate {
 }
 
 const MAX_RANGE_DAYS = 62;
+/** The studio calendar answers at most 42 days per request. */
+const CALENDAR_CHUNK = 42;
+const shiftKey = (key: string, days: number) => {
+  const date = parseDateKey(key);
+  date.setDate(date.getDate() + days);
+  return toDateKey(date);
+};
 
-export default function AvailabilityTab({ bookings }: { bookings: NormalizedBooking[] }) {
+/** Count active (not cancelled, not archived) bookings per date, in calendar-sized chunks. */
+async function countBookings(from: string, to: string) {
+  const counts: Record<string, number> = {};
+  for (let start = from; start <= to; start = shiftKey(start, CALENDAR_CHUNK)) {
+    const end = [shiftKey(start, CALENDAR_CHUNK - 1), to].sort()[0];
+    const rows = await rpc<{ booking_date: string }[]>('studio_calendar', { p_from: start, p_to: end, p_mine: false });
+    rows.forEach((row) => {
+      counts[row.booking_date] = (counts[row.booking_date] || 0) + 1;
+    });
+  }
+  return counts;
+}
+
+export default function AvailabilityTab({ embedded = false }: { embedded?: boolean }) {
   const [rows, setRows] = useState<BlockedDate[]>([]);
   const [state, setState] = useState<'loading' | 'ready' | 'error' | 'missing'>('loading');
   const [start, setStart] = useState('');
@@ -42,13 +62,35 @@ export default function AvailabilityTab({ bookings }: { bookings: NormalizedBook
     void load();
   }, [load]);
 
-  const activeByDate = useMemo(() => {
-    const map: Record<string, number> = {};
-    bookings.filter(isActiveBooking).forEach((booking) => {
-      map[booking.date] = (map[booking.date] || 0) + 1;
-    });
-    return map;
-  }, [bookings]);
+  const [activeByDate, setActiveByDate] = useState<Record<string, number>>({});
+  const [checkedThrough, setCheckedThrough] = useState('');
+
+  // Existing bookings for the next four months, so blocking a busy day shows a warning.
+  const loadCounts = useCallback(async (from: string, to: string) => {
+    try {
+      const counts = await countBookings(from, to);
+      setActiveByDate((current) => ({ ...current, ...counts }));
+      setCheckedThrough((current) => (to > current ? to : current));
+    } catch {
+      /* The warning is a convenience; blocking still works without it. */
+    }
+  }, []);
+
+  useEffect(() => {
+    void loadCounts(today, addDaysKey(125));
+  }, [loadCounts, today]);
+
+  useEffect(() => {
+    if (!start || !checkedThrough) return;
+    const last = end && end >= start ? end : start;
+    if (last > checkedThrough) void loadCounts(start, [last, shiftKey(start, MAX_RANGE_DAYS)].sort()[0]);
+  }, [start, end, checkedThrough, loadCounts]);
+
+  const clashesInRange = useMemo(() => {
+    if (!start) return 0;
+    const last = end && end >= start ? end : start;
+    return Object.entries(activeByDate).filter(([date, count]) => date >= start && date <= last && count > 0).length;
+  }, [activeByDate, start, end]);
 
   const upcoming = rows.filter((row) => row.date >= today);
   const past = rows.filter((row) => row.date < today).reverse();
@@ -86,7 +128,8 @@ export default function AvailabilityTab({ bookings }: { bookings: NormalizedBook
     try {
       const { error: insertError } = await supabase.from('blocked_dates').insert(fresh.map((date) => ({ blocked_date: date, reason: reason.trim() || null })));
       if (insertError) throw insertError;
-      const clashes = fresh.filter((date) => activeByDate[date]);
+      const counts = await countBookings(fresh[0], fresh[fresh.length - 1]).catch(() => activeByDate);
+      const clashes = fresh.filter((date) => counts[date]);
       toast.success(`${fresh.length} ${fresh.length === 1 ? 'date' : 'dates'} blocked`, {
         description: clashes.length ? `${clashes.length} of them already have bookings. Those bookings are not changed.` : undefined,
       });
@@ -114,11 +157,11 @@ export default function AvailabilityTab({ bookings }: { bookings: NormalizedBook
   };
 
   return (
-    <section className="admin-section" aria-labelledby="availability-title">
+    <section className={embedded ? 'ops-block-days' : 'admin-section'} aria-labelledby="availability-title">
       <header className="admin-head">
         <div>
-          <h1 id="availability-title">Availability</h1>
-          <p>Block days you can’t shoot. Customers won’t be able to pick them.</p>
+          {embedded ? <h2 id="availability-title">Block whole days</h2> : <h1 id="availability-title">Availability</h1>}
+          <p>Days you can’t shoot. Clients won’t be able to pick them on the website.</p>
         </div>
         <div className="admin-head-actions">
           <button type="button" className="icon-btn" onClick={() => void load()} aria-label="Refresh blocked dates" title="Refresh">
@@ -172,10 +215,15 @@ export default function AvailabilityTab({ bookings }: { bookings: NormalizedBook
               <input id="av-reason" type="text" maxLength={120} placeholder="e.g. Out of town, holiday, fully booked" value={reason} onChange={(event) => setReason(event.target.value)} />
             </div>
             {error && <p className="field-error form-note">{error}</p>}
-            {start && activeByDate[start] && (
+            {start && (!end || end === start) && activeByDate[start] > 0 && (
               <p className="notice notice-warning">
                 {activeByDate[start]} active {activeByDate[start] === 1 ? 'booking is' : 'bookings are'} already on {formatDateLong(start)}. Blocking won’t cancel{' '}
                 {activeByDate[start] === 1 ? 'it' : 'them'}.
+              </p>
+            )}
+            {start && end && end > start && clashesInRange > 0 && (
+              <p className="notice notice-warning">
+                {clashesInRange} of these {clashesInRange === 1 ? 'day already has' : 'days already have'} bookings. Blocking won’t cancel them.
               </p>
             )}
             <button type="submit" className="btn btn-primary" disabled={saving}>
@@ -237,10 +285,10 @@ function BlockedRow({ row, clashes, onRemove }: { row: BlockedDate; clashes: num
     <li>
       <span className="mini-date">
         <strong>{date.getDate()}</strong>
-        <span>{date.toLocaleDateString('en-US', { month: 'short' })}</span>
+        <span>{date.toLocaleDateString('en-GB', { month: 'short' })}</span>
       </span>
       <span className="mini-body">
-        <strong>{date.toLocaleDateString('en-US', { weekday: 'long', month: 'long', day: 'numeric', year: 'numeric' })}</strong>
+        <strong>{date.toLocaleDateString('en-GB', { weekday: 'long', month: 'long', day: 'numeric', year: 'numeric' })}</strong>
         <span>{row.reason || 'No reason given'}</span>
         {clashes > 0 && <span className="badge badge-warning">{clashes} active {clashes === 1 ? 'booking' : 'bookings'} that day</span>}
       </span>

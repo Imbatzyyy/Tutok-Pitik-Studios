@@ -400,7 +400,7 @@ export default function UserProfile({ isOpen, initialTab, user, catalog, onClose
 
   return (
     <>
-      <Modal open={isOpen} onClose={()=>{if(confirmNavigation())onClose();}} size="lg" className="profile-modal">
+      <Modal open={isOpen} onClose={()=>{void confirmNavigation().then((ok)=>{if(ok)onClose();});}} size="lg" className="profile-modal">
         <div className="profile-head">
           <div className="avatar avatar-lg">
             {user.profilePicture ? <img src={user.profilePicture} alt="" /> : <span>{initials(user.fullName)}</span>}
@@ -420,7 +420,7 @@ export default function UserProfile({ isOpen, initialTab, user, catalog, onClose
             {tabs.map((entry) => {
               const Icon = entry.icon;
               return (
-                <button key={entry.id} type="button" role="tab" aria-selected={tab === entry.id} className={tab === entry.id ? 'is-active' : ''} onClick={() => {if(confirmNavigation())setTab(entry.id);}}>
+                <button key={entry.id} type="button" role="tab" aria-selected={tab === entry.id} className={tab === entry.id ? 'is-active' : ''} onClick={() => {void confirmNavigation().then((ok)=>{if(ok)setTab(entry.id);});}}>
                   <Icon size={16} aria-hidden="true" /> {entry.label}
                   {entry.count ? <span className="tab-count">{entry.count}</span> : null}
                 </button>

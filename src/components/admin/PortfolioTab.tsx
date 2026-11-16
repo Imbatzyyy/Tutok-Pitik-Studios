@@ -8,7 +8,7 @@ import { compressImage, publicUrl, PORTFOLIO_BUCKET, randomId, uploadToBucket } 
 import type { SessionUser } from '../../lib/session';
 import { supabase } from '../../lib/supabase';
 import { categoryLabel, DEFAULT_PORTFOLIO, normalizePortfolioRow, PORTFOLIO_CATEGORIES, subCategoryLabel, type PortfolioItem } from '../../content/portfolio';
-import type { LoadState } from './AdminDashboard';
+import type { LoadState } from './shared';
 
 interface PortfolioTabProps {
   user: SessionUser;
