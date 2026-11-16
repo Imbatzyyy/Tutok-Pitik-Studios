@@ -58,7 +58,7 @@ export const randomId = () =>
 export async function uploadToBucket(bucket: string, path: string, blob: Blob): Promise<string | null> {
   try {
     const { error } = await supabase.storage.from(bucket).upload(path, blob, {
-      cacheControl: '31536000',
+      cacheControl: bucket === 'portfolio' ? '31536000' : '0',
       contentType: blob.type || 'image/jpeg',
       upsert: true,
     });
@@ -88,6 +88,22 @@ export async function signedUrl(bucket: string, path: string, expiresIn = 3600) 
 export const RECEIPTS_BUCKET = 'payment-receipts';
 export const PORTFOLIO_BUCKET = 'portfolio';
 export const AVATAR_BUCKET = 'profile-pictures';
+
+/** Legacy public URLs are resolved through an authenticated, expiring URL. */
+export async function resolveAvatarUrl(value: string | null | undefined): Promise<string> {
+  if (!value) return '';
+  if (/^data:image\/(jpeg|png|webp);base64,/i.test(value)) return value;
+  let path = value;
+  if (/^https?:/i.test(value)) {
+    try {
+      const url = new URL(value);
+      const prefix = `/storage/v1/object/public/${AVATAR_BUCKET}/`;
+      if (url.origin !== new URL(import.meta.env.VITE_SUPABASE_URL).origin || !url.pathname.startsWith(prefix)) return '';
+      path = decodeURIComponent(url.pathname.slice(prefix.length));
+    } catch { return ''; }
+  }
+  return await signedUrl(AVATAR_BUCKET, path, 3600) || '';
+}
 
 /** Resolve a viewable URL for a payment receipt stored inline or in private storage. */
 export async function resolveReceiptUrl(booking: { paymentReceiptUrl?: string; paymentReceiptPath?: string }) {

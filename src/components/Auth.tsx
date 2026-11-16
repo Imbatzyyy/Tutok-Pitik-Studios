@@ -1,10 +1,11 @@
 import { useEffect, useState, type FormEvent, type ReactNode } from 'react';
 import { Camera, Eye, EyeOff, KeyRound, LoaderCircle, MailCheck } from 'lucide-react';
 import Modal from './common/Modal';
-import { setRememberMePreference, supabase } from '../lib/supabase';
+import { getRememberMePreference, setRememberMePreference, supabase } from '../lib/supabase';
+import { prepareGoogleSignIn } from '../lib/google-auth';
+import { PolicyContent } from './PolicyPage';
 import { resolveSessionUser, type SessionUser } from '../lib/session';
 import { errorMessage } from '../lib/api';
-import { STUDIO } from '../content/site';
 
 export type AuthView = 'signin' | 'signup' | 'forgot';
 
@@ -13,6 +14,7 @@ interface AuthProps {
   defaultView?: AuthView;
   onClose: () => void;
   onSuccess: (user: SessionUser) => void;
+  bookingIntent?: boolean;
 }
 
 type Stage = AuthView | 'forgot-sent' | 'signup-done';
@@ -45,12 +47,12 @@ function PasswordField({ id, label, value, onChange, autoComplete, error, hint }
   );
 }
 
-export default function Auth({ isOpen, defaultView = 'signin', onClose, onSuccess }: AuthProps) {
+export default function Auth({ isOpen, defaultView = 'signin', onClose, onSuccess, bookingIntent = false }: AuthProps) {
   const [stage, setStage] = useState<Stage>(defaultView);
   const [form, setForm] = useState(EMPTY);
   const [errors, setErrors] = useState<Record<string, string>>({});
   const [loading, setLoading] = useState(false);
-  const [remember, setRemember] = useState(true);
+  const [remember, setRemember] = useState(getRememberMePreference);
   const [agreed, setAgreed] = useState(false);
   const [policy, setPolicy] = useState<'terms' | 'privacy' | null>(null);
 
@@ -69,6 +71,17 @@ export default function Auth({ isOpen, defaultView = 'signin', onClose, onSucces
   };
 
   const emailValid = /^\S+@\S+\.\S+$/.test(form.email.trim());
+
+  const googleSignIn = () => {
+    if (loading) return;
+    setLoading(true);
+    setErrors({});
+    try { prepareGoogleSignIn(remember, bookingIntent); }
+    catch {
+      setLoading(false);
+      setErrors({ general: 'Please allow browser storage for secure Google sign-in, or sign in with your email.' });
+    }
+  };
 
   const signIn = async (event: FormEvent) => {
     event.preventDefault();
@@ -109,7 +122,7 @@ export default function Auth({ isOpen, defaultView = 'signin', onClose, onSucces
 
     setLoading(true);
     try {
-      setRememberMePreference(true);
+      setRememberMePreference(remember);
       const { data, error } = await supabase.auth.signUp({
         email: form.email.trim(),
         password: form.password,
@@ -186,6 +199,21 @@ export default function Auth({ isOpen, defaultView = 'signin', onClose, onSucces
 
         {errors.general && <div className="notice notice-danger" role="alert"><p>{errors.general}</p></div>}
 
+        {(stage === 'signin' || stage === 'signup') && <div className="google-auth-options">
+          <button type="button" className="google-signin-button" disabled={loading} onClick={googleSignIn}>
+            <svg width="20" height="20" viewBox="0 0 48 48" aria-hidden="true">
+              <path fill="#EA4335" d="M24 9.5c3.54 0 6.71 1.22 9.21 3.6l6.85-6.85C35.9 2.38 30.47 0 24 0 14.62 0 6.51 5.38 2.56 13.22l7.98 6.19C12.43 13.72 17.74 9.5 24 9.5Z" />
+              <path fill="#4285F4" d="M46.98 24.55c0-1.57-.15-3.09-.38-4.55H24v9.02h12.94c-.58 2.96-2.26 5.48-4.78 7.18l7.73 6C44.4 38.04 46.98 31.89 46.98 24.55Z" />
+              <path fill="#FBBC05" d="M10.53 28.59A14.41 14.41 0 0 1 9.75 24c0-1.59.27-3.13.79-4.59l-7.98-6.19A23.87 23.87 0 0 0 0 24c0 3.87.93 7.53 2.56 10.78l7.97-6.19Z" />
+              <path fill="#34A853" d="M24 48c6.48 0 11.93-2.13 15.91-5.8l-7.73-6c-2.15 1.45-4.92 2.3-8.18 2.3-6.26 0-11.57-4.22-13.47-9.91l-7.98 6.19C6.51 42.62 14.62 48 24 48Z" />
+            </svg>
+            {loading ? 'Please wait…' : 'Continue with Google'}
+          </button>
+          <p className="google-auth-notice">Sign in or create an account. By continuing with Google, you agree to our <button type="button" className="btn-link" onClick={() => setPolicy('terms')}>Terms</button> and <button type="button" className="btn-link" onClick={() => setPolicy('privacy')}>Data Privacy Notice</button>.</p>
+          <label className="checkbox"><input type="checkbox" checked={remember} onChange={(event) => setRemember(event.target.checked)} /><span>Keep me signed in on this device</span></label>
+          <div className="auth-divider"><span>or use your email</span></div>
+        </div>}
+
         {stage === 'signin' && (
           <form className="auth-form" onSubmit={signIn} noValidate>
             <div className="field">
@@ -195,10 +223,6 @@ export default function Auth({ isOpen, defaultView = 'signin', onClose, onSucces
             </div>
             <PasswordField id="auth-password" label="Password" value={form.password} onChange={set('password')} autoComplete="current-password" error={errors.password} />
             <div className="auth-row">
-              <label className="checkbox">
-                <input type="checkbox" checked={remember} onChange={(event) => setRemember(event.target.checked)} />
-                <span>Keep me signed in</span>
-              </label>
               <button type="button" className="btn-link" onClick={() => { setStage('forgot'); setErrors({}); }}>
                 Forgot password?
               </button>
@@ -214,18 +238,18 @@ export default function Auth({ isOpen, defaultView = 'signin', onClose, onSucces
             <div className="field-row">
               <div className="field">
                 <label htmlFor="auth-first">First name</label>
-                <input id="auth-first" autoComplete="given-name" value={form.firstName} onChange={(event) => set('firstName')(event.target.value)} aria-invalid={Boolean(errors.firstName)} data-autofocus />
+                <input id="auth-first" type="text" autoComplete="given-name" value={form.firstName} onChange={(event) => set('firstName')(event.target.value)} aria-invalid={Boolean(errors.firstName)} data-autofocus />
                 {errors.firstName && <p className="field-error">{errors.firstName}</p>}
               </div>
               <div className="field">
                 <label htmlFor="auth-last">Last name</label>
-                <input id="auth-last" autoComplete="family-name" value={form.lastName} onChange={(event) => set('lastName')(event.target.value)} aria-invalid={Boolean(errors.lastName)} />
+                <input id="auth-last" type="text" autoComplete="family-name" value={form.lastName} onChange={(event) => set('lastName')(event.target.value)} aria-invalid={Boolean(errors.lastName)} />
                 {errors.lastName && <p className="field-error">{errors.lastName}</p>}
               </div>
             </div>
             <div className="field">
               <label htmlFor="auth-username">Username</label>
-              <input id="auth-username" autoComplete="username" value={form.username} onChange={(event) => set('username')(event.target.value)} aria-invalid={Boolean(errors.username)} />
+              <input id="auth-username" type="text" autoComplete="username" value={form.username} onChange={(event) => set('username')(event.target.value)} aria-invalid={Boolean(errors.username)} />
               {errors.username && <p className="field-error">{errors.username}</p>}
             </div>
             <div className="field">
@@ -289,23 +313,7 @@ export default function Auth({ isOpen, defaultView = 'signin', onClose, onSucces
         title={policy === 'terms' ? 'Terms and Conditions' : 'Data Privacy Notice'}
         footer={<button type="button" className="btn btn-primary" onClick={() => setPolicy(null)}>Close</button>}
       >
-        {policy === 'terms' ? (
-          <div className="policy-text">
-            <p><strong>Account use.</strong> Use your account only for legitimate {STUDIO.name} services such as bookings, inquiries and profile management.</p>
-            <p><strong>Accurate information.</strong> Provide true, complete and up-to-date details when you register and book.</p>
-            <p><strong>Bookings.</strong> Bookings are subject to studio review, schedule availability, payment verification and service policies.</p>
-            <p><strong>Your responsibility.</strong> Keep your login details secure. You are responsible for activity under your account.</p>
-            <p><strong>Changes.</strong> {STUDIO.name} may update pricing, transportation fees and service requirements when necessary.</p>
-          </div>
-        ) : (
-          <div className="policy-text">
-            <p><strong>What we collect.</strong> Your name, email, mobile number, account details, booking information and files you upload, only as needed to deliver our services.</p>
-            <p><strong>How we use it.</strong> Account creation, booking management, customer communication, payment review and service updates.</p>
-            <p><strong>Protection.</strong> We take reasonable steps to keep your data secure and accessible only for legitimate business purposes.</p>
-            <p><strong>Limited sharing.</strong> Your information is not shared unnecessarily and is only used for the services you requested.</p>
-            <p><strong>Consent.</strong> By creating an account, you agree to the processing of your information for these purposes.</p>
-          </div>
-        )}
+        {policy && <PolicyContent type={policy} />}
       </Modal>
     </>
   );

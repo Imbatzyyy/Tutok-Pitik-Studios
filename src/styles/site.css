@@ -2563,6 +2563,22 @@ a.contact-row:hover {
     gap: 2px;
 }
 
+.google-auth-options { display: grid; gap: 14px; margin-bottom: 18px; }
+.google-signin-button { display: flex; align-items: center; justify-content: center; gap: 12px; width: 100%; min-height: 48px; padding: 12px 20px; background: #fff; color: #1f1f1f; border: 1px solid #747775; border-radius: 24px; font-family: Arial, sans-serif; font-size: 14px; font-weight: 500; }
+.google-signin-button:hover { background: #f2f2f2; }
+.google-signin-button:focus-visible { outline: 3px solid #8ab4f8; outline-offset: 3px; }
+.google-signin-button:disabled { opacity: .65; cursor: wait; }
+.google-signin-button svg { flex-shrink: 0; }
+.google-auth-notice { margin: 0; color: var(--text-muted); font-size: 12px; line-height: 1.65; }
+.google-auth-notice .btn-link { font-size: inherit; }
+.auth-divider { display: flex; align-items: center; gap: 12px; color: var(--text-muted); font-size: 12px; }
+.auth-divider::before, .auth-divider::after { content: ''; height: 1px; flex: 1; background: var(--border); }
+.policy-page { max-width: 800px; padding-top: 40px; padding-bottom: 80px; }
+.policy-page > img { display: block; margin: 32px 0 24px; }
+.policy-page h1 { margin-bottom: 12px; }
+.policy-page > .policy-text { margin-top: 28px; }
+.policy-text a { text-decoration: underline; overflow-wrap: anywhere; }
+
 .auth-form .btn-block {
     margin-top: 10px;
 }

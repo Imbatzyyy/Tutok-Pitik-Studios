@@ -98,7 +98,7 @@ export default function Footer({ onBook }: { onBook: (serviceId?: string) => voi
         <p>
           © {new Date().getFullYear()} {STUDIO.name}. All rights reserved.
         </p>
-        <p>Founded by {STUDIO.founder}</p>
+        <p><a href="/privacy">Privacy</a> · <a href="/terms">Terms</a> · Founded by {STUDIO.founder}</p>
       </div>
     </footer>
   );

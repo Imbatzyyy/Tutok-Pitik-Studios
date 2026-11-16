@@ -2,7 +2,7 @@
 
 [build]
   publish = "dist"
-  command = "npm run typecheck && npm run test:edge-access && npm run test:booking-emails && npm run build"
+  command = "npm run typecheck && npm run test:edge-access && npm run test:booking-emails && npm run test:google-auth && npm run build"
 
 [build.environment]
   NODE_VERSION = "22"
@@ -19,6 +19,23 @@
     X-XSS-Protection = "1; mode=block"
     X-Content-Type-Options = "nosniff"
     Referrer-Policy = "strict-origin-when-cross-origin"
+    Strict-Transport-Security = "max-age=31536000"
+    Permissions-Policy = "camera=(), microphone=(), geolocation=()"
+    Content-Security-Policy = "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src 'self' https://fonts.gstatic.com; img-src 'self' https: data: blob:; connect-src 'self' https://dhqxzrzjvgcmjjkmxlfs.supabase.co wss://dhqxzrzjvgcmjjkmxlfs.supabase.co; object-src 'none'; base-uri 'self'; frame-ancestors 'none'; form-action 'self'; upgrade-insecure-requests"
+
+[[headers]]
+  for = "/auth/*"
+  [headers.values]
+    Cache-Control = "no-store"
+    Referrer-Policy = "no-referrer"
+    X-Robots-Tag = "noindex, nofollow"
+
+[[headers]]
+  for = "/reset-password"
+  [headers.values]
+    Cache-Control = "no-store"
+    Referrer-Policy = "no-referrer"
+    X-Robots-Tag = "noindex, nofollow"
 
 [[headers]]
   for = "/*.js"

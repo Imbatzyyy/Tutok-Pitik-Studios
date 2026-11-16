@@ -1,4 +1,5 @@
 import { supabase } from './supabase';
+import { resolveAvatarUrl } from './images';
 
 export interface SessionUser {
   id: string;
@@ -93,7 +94,7 @@ export class InactiveAccountError extends Error {
 /** Resolve the signed-in user's profile. Signs out and throws for accounts set to inactive by the studio. */
 export async function resolveSessionUser(authUser: any) {
   const profile = await fetchProfile(authUser.id);
-  if (profile?.status === 'inactive') {
+  if (profile && profile.status != null && profile.status !== 'active') {
     try {
       await supabase.auth.signOut();
     } catch {
@@ -101,5 +102,6 @@ export async function resolveSessionUser(authUser: any) {
     }
     throw new InactiveAccountError();
   }
-  return profile ? userFromProfile(profile, authUser) : userFromAuth(authUser);
+  if (!profile) throw new Error('We could not load your account securely. Please try signing in again.');
+  return { ...userFromProfile(profile, authUser), profilePicture: await resolveAvatarUrl(profile.profile_picture_url) };
 }

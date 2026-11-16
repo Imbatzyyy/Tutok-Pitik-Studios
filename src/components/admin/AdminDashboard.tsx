@@ -12,6 +12,7 @@ import PortfolioTab from './PortfolioTab';
 import TestimonialsTab from './TestimonialsTab';
 import UsersTab from './UsersTab';
 import { canAccess, normalizeUser, ROLE_LABELS, type AdminTabId, type AdminUser } from './shared';
+import { resolveAvatarUrl } from '../../lib/images';
 
 interface AdminDashboardProps {
   user: SessionUser;
@@ -67,7 +68,7 @@ export default function AdminDashboard({ user, onClose, onPortfolioUpdated, onLo
       setUsersState('error');
       return;
     }
-    setUsers((data || []).map(normalizeUser));
+    setUsers(await Promise.all((data || []).map(async (row) => ({ ...normalizeUser(row), profilePicture: await resolveAvatarUrl(row.profile_picture_url) }))));
     setUsersState('ready');
   }, [needsUsers]);
 

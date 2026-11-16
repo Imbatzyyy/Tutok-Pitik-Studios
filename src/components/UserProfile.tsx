@@ -8,7 +8,7 @@ import { itemMatchesKey, type PortfolioItem } from '../content/portfolio';
 import { STUDIO } from '../content/site';
 import { normalizeBooking, paymentLabel, paymentTone, photoLabel, statusLabel, statusTone, type NormalizedBooking } from '../lib/bookings';
 import { formatDateLong, formatPesoExact, initials } from '../lib/format';
-import { AVATAR_BUCKET, publicUrl, resolveReceiptUrl, uploadToBucket } from '../lib/images';
+import { AVATAR_BUCKET, resolveAvatarUrl, resolveReceiptUrl, uploadToBucket } from '../lib/images';
 import { errorMessage, notify } from '../lib/api';
 import { supabase } from '../lib/supabase';
 import { useFavorites } from '../lib/useFavorites';
@@ -329,7 +329,7 @@ export default function UserProfile({ isOpen, initialTab, user, catalog, onClose
       if (error) throw error;
       // Keep auth metadata in sync for name/phone only. Roles are never written from the browser.
       void supabase.auth.updateUser({ data: { full_name: fullName, phone: form.phone.trim() } }).catch(() => undefined);
-      onUpdateUser({ ...userFromProfile(data), profilePicture: data?.profile_picture_url || user.profilePicture });
+      onUpdateUser({ ...userFromProfile(data), profilePicture: user.profilePicture });
       void notify('/send-profile-update-email', { fullName, updatedFields: ['Full Name', 'Mobile Number'] });
       toast.success('Account details saved');
     } catch (error) {
@@ -358,10 +358,10 @@ export default function UserProfile({ isOpen, initialTab, user, catalog, onClose
   const savePhoto = async (blob: Blob, dataUrl: string) => {
     try {
       const path = await uploadToBucket(AVATAR_BUCKET, `${user.id}/avatar-${Date.now()}.jpg`, blob);
-      const url = path ? publicUrl(AVATAR_BUCKET, path) : dataUrl;
+      const url = path || dataUrl;
       const { error } = await supabase.from('users').update({ profile_picture_url: url, updated_at: new Date().toISOString() }).eq('id', user.id);
       if (error) throw error;
-      onUpdateUser({ ...user, profilePicture: url });
+      onUpdateUser({ ...user, profilePicture: await resolveAvatarUrl(url) });
       setCropSource(null);
       toast.success('Profile photo updated');
     } catch (error) {

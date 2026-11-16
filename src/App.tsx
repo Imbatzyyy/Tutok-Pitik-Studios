@@ -29,6 +29,8 @@ const AdminDashboard = lazy(() => import('./components/admin/AdminDashboard'));
 const Lightbox = lazy(() => import('./components/Lightbox'));
 const SuccessModal = lazy(() => import('./components/SuccessModal'));
 const ResetPasswordPage = lazy(() => import('./components/ResetPasswordPage'));
+const GoogleAuthPage = lazy(() => import('./components/GoogleAuthPage'));
+const PolicyPage = lazy(() => import('./components/PolicyPage'));
 
 const TEAM_ROLES = ['superadmin', 'admin', 'staff'];
 
@@ -37,7 +39,7 @@ function Site() {
   const [portfolio, setPortfolio] = useState<PortfolioItem[]>(DEFAULT_PORTFOLIO);
   const [lightbox, setLightbox] = useState<{ items: PortfolioItem[]; index: number } | null>(null);
   const [success, setSuccess] = useState<BookingSuccess | null>(null);
-  const [auth, setAuth] = useState<{ open: boolean; view: AuthView; intent?: 'booking' }>({ open: false, view: 'signin' });
+  const [auth, setAuth] = useState<{ open: boolean; view: AuthView; intent?: 'booking' }>({ open: new URLSearchParams(window.location.search).get('signin') === '1', view: 'signin' });
   const [profile, setProfile] = useState<{ open: boolean; tab?: ProfileTab }>({ open: false });
   const [adminOpen, setAdminOpen] = useState(false);
   const [prefill, setPrefill] = useState<BookingPrefill | null>(null);
@@ -206,7 +208,7 @@ function Site() {
             }}
           />
         )}
-        {auth.open && <Auth isOpen defaultView={auth.view} onClose={() => setAuth((current) => ({ ...current, open: false }))} onSuccess={handleAuthSuccess} />}
+        {auth.open && <Auth isOpen defaultView={auth.view} bookingIntent={auth.intent === 'booking'} onClose={() => setAuth((current) => ({ ...current, open: false }))} onSuccess={handleAuthSuccess} />}
         {profile.open && user.role !== 'guest' && (
           <UserProfile
             isOpen
@@ -229,6 +231,12 @@ function Site() {
 }
 
 export default function App() {
+  if (['/auth/google', '/auth/callback'].includes(window.location.pathname)) {
+    return <Suspense fallback={<main className="reset-page" role="status">Loading secure sign-in…</main>}><GoogleAuthPage /></Suspense>;
+  }
+  if (['/privacy', '/terms'].includes(window.location.pathname)) {
+    return <Suspense fallback={null}><PolicyPage type={window.location.pathname === '/privacy' ? 'privacy' : 'terms'} /></Suspense>;
+  }
   if (window.location.pathname === '/reset-password') {
     return (
       <Suspense fallback={null}>

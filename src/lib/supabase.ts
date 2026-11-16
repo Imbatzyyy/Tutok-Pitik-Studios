@@ -7,7 +7,25 @@ const getRememberPreference = () => {
   return window.localStorage.getItem(REMEMBER_ME_KEY) === 'true';
 };
 
-const AUTH_STORAGE_KEY_PREFIX = 'sb-';
+const supabaseUrl = import.meta.env.VITE_SUPABASE_URL;
+const supabaseAnonKey = import.meta.env.VITE_SUPABASE_ANON_KEY;
+if (!supabaseUrl || !supabaseAnonKey) {
+  throw new Error('Missing Supabase environment variables. Set VITE_SUPABASE_URL and VITE_SUPABASE_ANON_KEY in Netlify before deploying.');
+}
+const projectHost = new URL(supabaseUrl).hostname;
+export const projectId = projectHost.replace('.supabase.co', '');
+const AUTH_STORAGE_KEY_PREFIX = `sb-${projectId}-auth-token`;
+
+// Google is only used to establish identity. Do not retain Google API tokens.
+export const stripProviderTokens = (key: string, value: string) => {
+  if (key !== AUTH_STORAGE_KEY_PREFIX) return value;
+  try {
+    const session = JSON.parse(value);
+    delete session.provider_token;
+    delete session.provider_refresh_token;
+    return JSON.stringify(session);
+  } catch { return value; }
+};
 
 const migrateSupabaseSessionStorage = (remember: boolean) => {
   if (typeof window === 'undefined') return;
@@ -40,7 +58,7 @@ const authStorage = {
     const remember = getRememberPreference();
     const primary = remember ? window.localStorage : window.sessionStorage;
     const secondary = remember ? window.sessionStorage : window.localStorage;
-    primary.setItem(key, value);
+    primary.setItem(key, stripProviderTokens(key, value));
     secondary.removeItem(key);
   },
   removeItem(key: string) {
@@ -49,15 +67,6 @@ const authStorage = {
     window.sessionStorage.removeItem(key);
   },
 };
-
-const supabaseUrl = import.meta.env.VITE_SUPABASE_URL;
-const supabaseAnonKey = import.meta.env.VITE_SUPABASE_ANON_KEY;
-
-if (!supabaseUrl || !supabaseAnonKey) {
-  throw new Error(
-    'Missing Supabase environment variables. Set VITE_SUPABASE_URL and VITE_SUPABASE_ANON_KEY in Netlify before deploying.'
-  );
-}
 
 // Local testing only: VITE_DEMO_MODE=true swaps the network for an in-memory
 // backend (see demo.ts). Production builds drop this branch entirely.
@@ -70,12 +79,17 @@ const demoFetch: typeof fetch | undefined = isDemoMode
 
 export const appFetch: typeof fetch = demoFetch || ((...args) => fetch(...args));
 
+// Google runs on dedicated pages so email confirmation and password-recovery
+// links keep their existing cross-device behavior. Google uses PKCE exclusively.
+const isGoogleRoute = ['/auth/google', '/auth/callback'].includes(window.location.pathname);
+
 export const supabase = createClient(supabaseUrl, supabaseAnonKey, {
   global: demoFetch ? { fetch: demoFetch } : undefined,
   auth: {
     persistSession: true,
     autoRefreshToken: true,
-    detectSessionInUrl: true,
+    flowType: isGoogleRoute ? 'pkce' : 'implicit',
+    detectSessionInUrl: !isGoogleRoute,
     storage: authStorage,
   },
 });
@@ -91,6 +105,3 @@ export const setRememberMePreference = (remember: boolean) => {
 };
 
 export const getRememberMePreference = getRememberPreference;
-
-const projectHost = new URL(supabaseUrl).hostname;
-export const projectId = projectHost.replace('.supabase.co', '');
