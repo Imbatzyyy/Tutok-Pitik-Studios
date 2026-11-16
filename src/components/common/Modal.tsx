@@ -17,7 +17,7 @@ interface ModalProps {
   labelledBy?: string;
 }
 
-export default function Modal({ open, onClose, title, description, icon, children, footer, size = 'md', className = '', dismissible = true }: ModalProps) {
+export default function Modal({ open, onClose, title, description, icon, children, footer, size = 'md', className = '', dismissible = true, labelledBy }: ModalProps) {
   const ref = useModal<HTMLDivElement>(open, dismissible ? onClose : undefined);
   const titleId = useId();
   if (!open) return null;
@@ -29,7 +29,7 @@ export default function Modal({ open, onClose, title, description, icon, childre
         className={`ui-modal ui-modal-${size} ${className}`}
         role="dialog"
         aria-modal="true"
-        aria-labelledby={title ? titleId : undefined}
+        aria-labelledby={title ? titleId : labelledBy}
         tabIndex={-1}
       >
         {(title || icon) && (

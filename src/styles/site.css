@@ -2809,6 +2809,8 @@ a.contact-row:hover {
    Auth
    ========================================================================== */
 .auth-tabs {
+    position: relative;
+    isolation: isolate;
     display: grid;
     grid-template-columns: 1fr 1fr;
     gap: 4px;
@@ -2816,6 +2818,26 @@ a.contact-row:hover {
     margin-bottom: 20px;
     border-radius: var(--radius-pill);
     background: rgba(255, 255, 255, 0.06);
+    border: 1px solid var(--border-subtle);
+}
+
+/* The white pill slides between the two tabs. */
+.auth-tabs::before {
+    content: '';
+    position: absolute;
+    z-index: -1;
+    top: 4px;
+    bottom: 4px;
+    left: 4px;
+    width: calc(50% - 6px);
+    border-radius: var(--radius-pill);
+    background: #fff;
+    box-shadow: 0 6px 18px rgba(0, 0, 0, 0.35);
+    transition: transform 0.4s var(--ease-out);
+}
+
+.auth-tabs[data-active='signup']::before {
+    transform: translateX(calc(100% + 4px));
 }
 
 .auth-tabs button {
@@ -2824,10 +2846,14 @@ a.contact-row:hover {
     color: var(--text-muted);
     font-weight: 600;
     font-size: 14px;
+    transition: color 0.25s var(--ease);
+}
+
+.auth-tabs button:hover:not(.is-active) {
+    color: #fff;
 }
 
 .auth-tabs button.is-active {
-    background: #fff;
     color: #000;
 }
 
@@ -3462,7 +3488,8 @@ a.contact-row:hover {
 }
 
 /* ==========================================================================
-   Sign-in sheet
+   Sign-in sheet: a photo panel beside the form on wide screens,
+   a compact sheet with a dimmed photo header on phones.
    ========================================================================== */
 .auth-remember {
     font-size: 14px;
@@ -3473,8 +3500,413 @@ a.contact-row:hover {
     margin: 14px 0 0;
 }
 
+.auth-modal.ui-modal {
+    max-width: 520px;
+    overflow: hidden;
+}
+
+.auth-modal .ui-modal-body {
+    padding: 0;
+    flex: 1 1 auto;
+}
+
+.auth-modal .ui-modal-close {
+    top: 14px;
+    right: 14px;
+    background: rgba(0, 0, 0, 0.45);
+    -webkit-backdrop-filter: blur(8px);
+    backdrop-filter: blur(8px);
+}
+
+.auth-shell {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr);
+}
+
+/* Picture panel */
+.auth-visual {
+    grid-area: 1 / 1;
+    position: relative;
+    overflow: hidden;
+    background: #050505;
+}
+
+.auth-visual-photo {
+    position: absolute;
+    inset: 0;
+    opacity: 0;
+    transform: scale(1.06);
+    transition: opacity 0.7s var(--ease), transform 1.4s var(--ease-out);
+}
+
+.auth-visual-photo.is-active {
+    opacity: 1;
+    transform: none;
+}
+
+.auth-visual-photo img {
+    width: 100%;
+    height: 100%;
+    object-fit: cover;
+    object-position: center 35%;
+}
+
+.auth-visual-shade {
+    position: absolute;
+    inset: 0;
+    background: linear-gradient(180deg, rgba(17, 17, 17, 0.5) 0%, rgba(17, 17, 17, 0.82) 62%, var(--surface-1) 100%);
+}
+
+.auth-visual-logo {
+    display: none;
+}
+
+/* Heading */
+.auth-head {
+    grid-area: 1 / 1;
+    position: relative;
+    z-index: 1;
+    padding: 26px 64px 20px 24px;
+}
+
+.auth-head > * {
+    animation: auth-rise 0.45s var(--ease-out) both;
+}
+
+.auth-head > :nth-child(2) { animation-delay: 0.04s; }
+.auth-head > :nth-child(3) { animation-delay: 0.08s; }
+
+.auth-head-icon {
+    display: inline-grid;
+    place-items: center;
+    width: 42px;
+    height: 42px;
+    margin-bottom: 14px;
+    border-radius: 14px;
+    background: var(--primary-soft);
+    color: var(--primary-strong);
+    border: 1px solid rgba(230, 57, 70, 0.3);
+}
+
+.auth-eyebrow {
+    display: none;
+    margin: 0 0 10px;
+    color: #ffb5b5;
+    font-size: 11px;
+    font-weight: 700;
+    letter-spacing: 0.16em;
+    text-transform: uppercase;
+}
+
+.auth-head h2 {
+    margin: 0 0 6px;
+    font-family: var(--font-display);
+    font-size: 25px;
+    line-height: 1.12;
+    letter-spacing: -0.01em;
+}
+
+.auth-lead {
+    margin: 0;
+    max-width: 44ch;
+    color: rgba(255, 255, 255, 0.78);
+    font-size: 14px;
+    line-height: 1.55;
+}
+
+/* Form column */
+.auth-main {
+    grid-area: 2 / 1;
+    min-height: 0;
+    display: flex;
+    flex-direction: column;
+}
+
+.auth-main-inner {
+    margin: auto 0;
+    padding: 4px 24px 26px;
+}
+
+.auth-pane {
+    animation: auth-rise 0.38s var(--ease-out) both;
+}
+
+@keyframes auth-rise {
+    from {
+        opacity: 0;
+        transform: translateY(10px);
+    }
+}
+
+.auth-modal .google-auth-options {
+    gap: 12px;
+    margin-bottom: 16px;
+}
+
+.auth-modal .google-signin-button {
+    min-height: 46px;
+    transition: background-color 0.2s var(--ease), transform 0.2s var(--ease), box-shadow 0.2s var(--ease);
+}
+
+.auth-modal .google-signin-button:hover:not(:disabled) {
+    transform: translateY(-1px);
+    box-shadow: 0 8px 22px rgba(0, 0, 0, 0.35);
+}
+
+.auth-modal .google-auth-notice {
+    margin-top: -4px;
+    text-align: center;
+    font-size: 12px;
+    line-height: 1.5;
+}
+
+.auth-modal .field {
+    gap: 6px;
+    margin-bottom: 14px;
+}
+
+.auth-modal .field-row > .field {
+    margin-bottom: 14px;
+}
+
+.auth-modal .field label {
+    font-size: 13px;
+    color: var(--text-soft);
+}
+
+.auth-modal .optional {
+    font-size: 12px;
+}
+
+.auth-modal .input-icon > svg {
+    z-index: 1;
+    transition: color 0.2s var(--ease);
+}
+
+.auth-modal .input-icon:focus-within > svg {
+    color: #fff;
+}
+
+.auth-modal .input-icon input {
+    min-height: 46px;
+    padding-left: 42px;
+    border-radius: 12px;
+    background: rgba(255, 255, 255, 0.04);
+}
+
+.auth-modal .input-affix input {
+    padding-right: 48px;
+}
+
+.auth-modal .input-icon input:focus {
+    background: rgba(255, 255, 255, 0.07);
+}
+
+.auth-modal .input-icon input:-webkit-autofill {
+    -webkit-text-fill-color: var(--text);
+    caret-color: var(--text);
+    box-shadow: 0 0 0 1000px #1c1c1c inset;
+    transition: background-color 9999s ease-out;
+}
+
+.auth-modal .field-hint,
+.auth-modal .field-error {
+    font-size: 12px;
+    line-height: 1.45;
+}
+
+.auth-modal .auth-row {
+    margin: 0 0 6px;
+}
+
+.auth-modal .agreement-box {
+    margin: 6px 0 6px;
+    padding: 12px 14px;
+    font-size: 13px;
+    line-height: 1.55;
+    border-radius: 12px;
+}
+
+.auth-modal .agreement-box input {
+    margin-top: 1px;
+}
+
+.auth-modal .agreement-help {
+    margin-bottom: 6px;
+    line-height: 1.5;
+}
+
+.auth-modal .auth-form .btn-block {
+    min-height: 48px;
+    margin-top: 8px;
+}
+
 .auth-modal .privacy-highlight {
-    margin-top: 18px;
+    margin-top: 16px;
+    padding: 12px 14px;
+    gap: 10px;
+    border-radius: 12px;
+}
+
+.auth-modal .privacy-highlight > svg {
+    width: 18px;
+    height: 18px;
+}
+
+.auth-modal .privacy-highlight strong {
+    font-size: 13px;
+}
+
+.auth-modal .privacy-highlight p {
+    margin: 1px 0 4px;
+    font-size: 12px;
+    line-height: 1.5;
+}
+
+.auth-modal .privacy-read-link {
+    font-size: 12px;
+}
+
+.auth-google-modal .ui-modal-icon {
+    background: #fff;
+    border: 1px solid rgba(255, 255, 255, 0.2);
+}
+
+/* Only one privacy note shows at a time: below the form on narrow screens. */
+.auth-head .privacy-highlight {
+    display: none;
+}
+
+/* Phones: names stay side by side, everything else stacks. */
+@media (max-width: 640px) {
+    .auth-modal.ui-modal {
+        max-width: none;
+        max-height: 94dvh;
+    }
+
+    .auth-modal .ui-modal-body {
+        overflow-y: auto;
+    }
+
+    .auth-modal .auth-pair-names {
+        grid-template-columns: repeat(2, minmax(0, 1fr));
+        gap: 0 12px;
+    }
+
+    .auth-head {
+        padding: 24px 60px 18px 18px;
+    }
+
+    .auth-head h2 {
+        font-size: 23px;
+    }
+
+    .auth-main-inner {
+        padding: 2px 18px calc(22px + env(safe-area-inset-bottom));
+    }
+}
+
+/* Wide screens: photo panel on the left, the form on the right, no scrolling. */
+@media (min-width: 900px) {
+    /* Sign in is a shorter card; it grows smoothly when switching to Create account. */
+    .auth-modal.ui-modal {
+        max-width: 940px;
+        height: min(660px, calc(100dvh - 48px));
+        transition: height 0.5s var(--ease-out);
+    }
+
+    .auth-modal.auth-stage-signup {
+        height: min(860px, calc(100dvh - 48px));
+    }
+
+    .auth-modal .field,
+    .auth-modal .field-row > .field {
+        margin-bottom: 12px;
+    }
+
+    .auth-pane > .privacy-highlight {
+        display: none;
+    }
+
+    .auth-head .privacy-highlight {
+        display: flex;
+        margin-top: 20px;
+        background: rgba(10, 10, 10, 0.55);
+        -webkit-backdrop-filter: blur(10px);
+        backdrop-filter: blur(10px);
+        border-color: rgba(255, 255, 255, 0.14);
+        border-left-color: var(--color-primary);
+    }
+
+    .auth-modal .ui-modal-body {
+        display: grid;
+        grid-template-rows: minmax(0, 1fr);
+        overflow: hidden;
+    }
+
+    .auth-shell {
+        grid-template-columns: minmax(0, 0.72fr) minmax(0, 1fr);
+        grid-template-rows: minmax(0, 1fr) auto;
+        min-height: 0;
+    }
+
+    .auth-visual {
+        grid-area: 1 / 1 / 3 / 2;
+        border-right: 1px solid var(--border-subtle);
+    }
+
+    .auth-visual-shade {
+        background:
+            linear-gradient(180deg, rgba(0, 0, 0, 0.45) 0%, rgba(0, 0, 0, 0) 24%),
+            linear-gradient(0deg, rgba(0, 0, 0, 0.92) 0%, rgba(0, 0, 0, 0.55) 38%, rgba(0, 0, 0, 0) 66%);
+    }
+
+    .auth-visual-logo {
+        display: block;
+        position: absolute;
+        top: 22px;
+        left: 24px;
+        width: 56px;
+        height: 56px;
+        object-fit: contain;
+    }
+
+    .auth-head {
+        grid-area: 2 / 1 / 3 / 2;
+        align-self: end;
+        padding: 0 32px 34px;
+    }
+
+    .auth-eyebrow {
+        display: block;
+    }
+
+    .auth-head h2 {
+        font-size: 31px;
+        margin-bottom: 10px;
+    }
+
+    .auth-lead {
+        font-size: 14px;
+    }
+
+    .auth-head-icon {
+        margin-bottom: 18px;
+    }
+
+    .auth-main {
+        grid-area: 1 / 2 / 3 / 3;
+        overflow-y: auto;
+        overscroll-behavior: contain;
+    }
+
+    .auth-main-inner {
+        padding: 58px 40px 30px;
+    }
+
+    .auth-modal .ui-modal-close {
+        background: rgba(255, 255, 255, 0.06);
+    }
 }
 
 /* ==========================================================================
