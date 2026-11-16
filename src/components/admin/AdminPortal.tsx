@@ -32,7 +32,6 @@ export default function AdminPortal() {
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState('');
   const [fieldErrors, setFieldErrors] = useState<FieldErrors>({});
-  const [helpOpen, setHelpOpen] = useState(false);
   const [path, setPath] = useState(window.location.pathname);
   const [routeRevision, setRouteRevision] = useState(0);
   const checkRunning = useRef(false);
@@ -328,12 +327,7 @@ export default function AdminPortal() {
             </div>
 
             <div className="field">
-              <div className="studio-password-label">
-                <label htmlFor="team-password">Password</label>
-                <button type="button" className="studio-link-btn" aria-expanded={helpOpen} aria-controls="team-reset-help" onClick={() => setHelpOpen((open) => !open)}>
-                  Forgot password?
-                </button>
-              </div>
+              <label htmlFor="team-password">Password</label>
               <div className="input-affix">
                 <input
                   ref={passwordRef}
@@ -366,14 +360,6 @@ export default function AdminPortal() {
                 </p>
               )}
             </div>
-
-            {helpOpen && (
-              <div className="studio-reset-help" id="team-reset-help">
-                <strong>Resetting a team password</strong>
-                <p>For security, team passwords can’t be reset from this page. Ask a super admin to send you a reset link from Accounts &amp; roles in the workspace.</p>
-                <p>If you are the only super admin, contact the verified project owner or another super admin for help.</p>
-              </div>
-            )}
 
             <button type="submit" className="btn btn-primary btn-block studio-login-submit" disabled={busy}>
               {busy && <LoaderCircle size={18} className="spin" aria-hidden="true" />}
