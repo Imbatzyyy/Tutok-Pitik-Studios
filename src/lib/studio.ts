@@ -19,7 +19,8 @@ export function useStudioLive(userId:string,team:boolean,onRefresh:()=>void,enab
  },[userId,team,enabled]);return state;
 }
 const unsavedForms=new Set<symbol>();
-export const confirmNavigation=()=>unsavedForms.size===0||window.confirm('Discard your unsaved changes?');
+export const hasUnsavedChanges=()=>unsavedForms.size>0;
+export const confirmNavigation=()=>!hasUnsavedChanges()||window.confirm('Discard your unsaved changes?');
 export function useUnsaved(dirty:boolean){useEffect(()=>{if(!dirty)return;const key=Symbol();unsavedForms.add(key);const guard=(e:BeforeUnloadEvent)=>{e.preventDefault();e.returnValue='';};window.addEventListener('beforeunload',guard);return()=>{unsavedForms.delete(key);window.removeEventListener('beforeunload',guard);};},[dirty]);}
 export function useResource<T>(load:()=>Promise<T>,deps:unknown[]=[]){const [data,setData]=useState<T|null>(null),[error,setError]=useState(''),[loading,setLoading]=useState(true);const run=useRef(0);const refresh=useCallback(async()=>{const n=++run.current;try{const value=await load();if(n===run.current){setData(value);setError('');}}catch(e){if(n===run.current)setError(e instanceof Error?e.message:'Could not load data');}finally{if(n===run.current)setLoading(false);}},deps);useEffect(()=>{setLoading(true);void refresh();return()=>{run.current++;};},[refresh]);return {data,error,loading,refresh};}
 export function download(name:string,content:string,type='text/plain'){const url=URL.createObjectURL(new Blob([content],{type}));const a=document.createElement('a');a.href=url;a.download=name;a.click();setTimeout(()=>URL.revokeObjectURL(url),1000);}

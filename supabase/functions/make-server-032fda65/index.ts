@@ -3,7 +3,7 @@ import { cors } from "npm:hono@4.13.17/cors";
 import { logger } from "npm:hono@4.13.17/logger";
 import * as kv from "./kv_store.tsx";
 import { createClient } from "npm:@supabase/supabase-js";
-import { accountContent, STUDIO_EMAIL } from "../_shared/email.ts";
+import { accountContent, teamPasswordResetContent, STUDIO_EMAIL } from "../_shared/email.ts";
 
 import { hasPortalSession } from "../_shared/admin-session.ts";
 
@@ -813,6 +813,31 @@ app.put("/make-server-032fda65/users/:id", async (c) => {
     console.error('Update user error:', error);
     return c.json({ error: error.message }, 500);
   }
+});
+
+// Team recovery is initiated only by a verified, MFA-bound super admin.
+app.post("/make-server-032fda65/users/:id/password-reset",async(c)=>{
+ const auth=await requireAuthenticatedProfile(c);if(!auth)return c.json({error:'Unauthorized'},401);
+ if(auth.profile.role!=='superadmin')return c.json({error:'Superadmin access required'},403);
+ const target=c.req.param('id');if(!/^[0-9a-f]{8}-[0-9a-f-]{27}$/i.test(target))return c.json({error:'Invalid account'},400);
+ const key=Deno.env.get('RESEND_API_KEY'),from=Deno.env.get('RESEND_FROM_EMAIL');if(!key||!from)return c.json({error:'Email service unavailable'},503);
+ const {data:requestId,error:limitError}=await supabase.rpc('studio_begin_password_reset',{p_actor:auth.user.id,p_target:target});
+ if(limitError)return c.json({error:limitError.code==='P0001'?'Please wait before sending another reset email.':'Choose an active team account.'},limitError.code==='P0001'?429:400);
+ try{
+  const {data:targetUser,error:userError}=await supabase.auth.admin.getUserById(target);if(userError||!targetUser.user?.email)throw Error('Account unavailable');
+  const {data:generated,error:linkError}=await supabase.auth.admin.generateLink({type:'recovery',email:targetUser.user.email,options:{redirectTo:'https://tutokpitikstudios.com/reset-password?studio=1'}});
+  if(linkError||!generated.properties?.action_link)throw Error('Link unavailable');
+  const link=new URL(generated.properties.action_link);if(link.origin!=='https://dhqxzrzjvgcmjjkmxlfs.supabase.co'||link.pathname!=='/auth/v1/verify'||link.searchParams.get('type')!=='recovery')throw Error('Invalid reset link');
+  const tokenHash=link.searchParams.get('token');if(!tokenHash)throw Error('Missing reset token');
+  const privateLink=new URL('https://tutokpitikstudios.com/reset-password?studio=1');privateLink.hash=new URLSearchParams({token_hash:tokenHash,type:'recovery'}).toString();
+  const response=await fetch('https://api.resend.com/emails',{method:'POST',headers:{Authorization:`Bearer ${key}`,'Content-Type':'application/json','Idempotency-Key':`studio-password-reset:${requestId}`},body:JSON.stringify({from,to:[targetUser.user.email],reply_to:STUDIO_EMAIL,...teamPasswordResetContent(targetUser.user.user_metadata?.full_name,privateLink.href)}),signal:AbortSignal.timeout(15000)});
+  if(!response.ok)throw Error('Delivery unavailable');
+  await supabase.rpc('studio_finish_password_reset',{p_request:requestId,p_sent:true});
+  return c.json({success:true});
+ }catch{
+  await supabase.rpc('studio_finish_password_reset',{p_request:requestId,p_sent:false});
+  return c.json({error:'Unable to send a reset email right now. Please try again later.'},503);
+ }
 });
 
 app.delete("/make-server-032fda65/users/:id", async (c) => {

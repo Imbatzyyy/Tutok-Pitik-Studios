@@ -1,6 +1,6 @@
 import '../../styles/studio-operations.css';
 import { lazy, Suspense, useCallback, useEffect, useRef, useState, type FormEvent } from 'react';
-import { ArrowLeft, ArrowUpRight, Camera, Eye, EyeOff, LoaderCircle, LockKeyhole, Mail, ShieldCheck } from 'lucide-react';
+import { ArrowLeft, ArrowUpRight, Camera, Eye, EyeOff, LoaderCircle, LockKeyhole, ShieldCheck } from 'lucide-react';
 import { Toaster } from 'sonner';
 import { appFetch, isDemoMode, supabase } from '../../lib/supabase';
 import { isTeamRole, resolveSessionUser, type SessionUser } from '../../lib/session';
@@ -19,7 +19,7 @@ export default function AdminPortal() {
   const [checkError,setCheckError]=useState(false);
   const [email,setEmail]=useState(''); const [password,setPassword]=useState('');
   const [visible,setVisible]=useState(false); const [busy,setBusy]=useState(false);
-  const [error,setError]=useState(''); const [reset,setReset]=useState(false); const [sent,setSent]=useState(false);
+  const [error,setError]=useState('');
   const [path,setPath]=useState(window.location.pathname);
   const checkRunning=useRef(false);
   const [routeRevision,setRouteRevision]=useState(0);
@@ -72,14 +72,9 @@ export default function AdminPortal() {
   },[user,checking,checkError,path,navigate]);
   const submit=async(event:FormEvent)=>{
     event.preventDefault(); if(busy)return;setError('');
-    if(!/^\S+@\S+\.\S+$/.test(email.trim())||(!reset&&!password)){setError('Enter your email and password to continue.');return;}
+    if(!/^\S+@\S+\.\S+$/.test(email.trim())||!password){setError('Enter your email and password to continue.');return;}
     setBusy(true);
     try{
-      if(reset){
-        const {error:resetError}=await supabase.auth.resetPasswordForEmail(email.trim(),{redirectTo:`${location.origin}/reset-password`});
-        if(resetError)throw new Error('Unable to send a reset link right now. Please try again.');
-        setSent(true);return;
-      }
       const response=await appFetch(`${location.origin}/.netlify/functions/admin-login`,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({email:email.trim(),password}),signal:AbortSignal.timeout(30_000)});
       const result=await response.json();
       if(!response.ok)throw new Error(result.error||'Unable to sign in with these details.');
@@ -91,7 +86,7 @@ export default function AdminPortal() {
   if(checking)return <main className="admin-loading" role="status"><LoaderCircle className="spin"/> Opening your studio workspace…</main>;
   if(checkError)return <main className="admin-loading"><ShieldCheck/><h1>We couldn’t verify your session</h1><p>Check your connection and try again.</p><button className="btn btn-primary" onClick={()=>void check()}>Try again</button><a href={LOGIN} onClick={()=>void supabase.auth.signOut({scope:'local'})}>Return to sign in</a></main>;
   if(needsMfa)return <StudioMfa onVerified={()=>void check()} onExit={()=>{setNeedsMfa(false);void signOut();}}/>;
-  if(user)return <div className="admin-portal">{isDemoMode&&<div className="demo-banner">Local preview · fictional studio data</div>}<Suspense fallback={<main className="admin-loading">Loading workspace…</main>}><Dashboard key={`${user.role}-${routeRevision}`} user={user} initialTab={route?.view==='admin'?route.tab:undefined} initialBookingId={route?.view==='admin'?route.bookingId:undefined} onClose={()=>window.location.assign('/')} onLogout={()=>void signOut()} onLocationChange={(tab,id)=>navigate(id?`/admin/bookings/${encodeURIComponent(id)}`:`/admin/${tab}`,true)}/></Suspense><Toaster theme="light" position="top-right" richColors closeButton/></div>;
+  if(user)return <div className="admin-portal">{isDemoMode&&<div className="demo-banner">Local preview · fictional studio data</div>}<Suspense fallback={<main className="admin-loading">Loading workspace…</main>}><Dashboard key={`${user.role}-${routeRevision}`} user={user} initialTab={route?.view==='admin'?route.tab:undefined} initialBookingId={route?.view==='admin'?route.bookingId:undefined} onClose={()=>window.location.assign('/')} onLogout={signOut} onLocationChange={(tab,id)=>navigate(id?`/admin/bookings/${encodeURIComponent(id)}`:`/admin/${tab}`,true)}/></Suspense><Toaster theme="light" position="top-right" richColors closeButton/></div>;
   return <main className="studio-login">
     <section className="studio-login-photo" aria-label="Tutok Pitik Studios team workspace">
       <img src={photo.src} alt="Photography by Tutok Pitik Studios"/>
@@ -100,15 +95,14 @@ export default function AdminPortal() {
     </section>
     <section className="studio-login-panel">
       <a className="studio-back" href="/"><ArrowLeft size={16}/> Back to the website</a>
-      <div className="studio-login-form"><span className="studio-login-symbol"><Camera size={27}/></span><p className="studio-eyebrow">THE STUDIO WORKSPACE</p><h2>{reset?'Reset your password':'Welcome back.'}</h2><p className="studio-login-intro">{reset?'We’ll send a reset link to your account email.':'Sign in to manage the moments that matter.'}</p>
-      {sent?<div className="studio-reset-sent"><Mail/><h3>Check your inbox</h3><p>If the address is eligible, a reset link will arrive shortly. After resetting, return here to sign in.</p><button className="btn btn-primary" onClick={()=>{setReset(false);setSent(false);}}>Back to sign in</button></div>:<form onSubmit={submit}>
+      <div className="studio-login-form"><span className="studio-login-symbol"><Camera size={27}/></span><p className="studio-eyebrow">THE STUDIO WORKSPACE</p><h2>Welcome back.</h2><p className="studio-login-intro">Sign in to manage the moments that matter.</p>
+      <form onSubmit={submit}>
         {error&&<div className="notice notice-danger" role="alert">{error}</div>}
         <div className="field"><label htmlFor="team-email">Work email</label><input id="team-email" autoComplete="username" type="email" placeholder="you@studio.com" value={email} onChange={e=>setEmail(e.target.value)} required/></div>
-        {!reset&&<div className="field"><div className="studio-password-label"><label htmlFor="team-password">Password</label><button type="button" onClick={()=>{setReset(true);setError('');}}>Forgot password?</button></div><div className="input-affix"><input id="team-password" autoComplete="current-password" type={visible?'text':'password'} value={password} onChange={e=>setPassword(e.target.value)} required/><button type="button" className="affix-btn" aria-label={visible?'Hide password':'Show password'} onClick={()=>setVisible(!visible)}>{visible?<EyeOff size={18}/>:<Eye size={18}/>}</button></div></div>}
-        <button className="btn btn-primary btn-block studio-login-submit" disabled={busy}>{busy?<LoaderCircle size={18} className="spin"/>:<ArrowUpRight size={18}/>} {busy?'Please wait…':reset?'Send reset link':'Sign in to workspace'}</button>
-        {reset&&<button type="button" className="btn btn-ghost btn-block" onClick={()=>setReset(false)}>Back to sign in</button>}
-      </form>}
-      <p className="studio-access-note"><LockKeyhole size={16}/> Access is limited to authorized studio team members. Need access? Contact your studio owner.</p>
+        <div className="field"><div className="studio-password-label"><label htmlFor="team-password">Password</label></div><div className="input-affix"><input id="team-password" autoComplete="current-password" type={visible?'text':'password'} value={password} onChange={e=>setPassword(e.target.value)} required/><button type="button" className="affix-btn" aria-label={visible?'Hide password':'Show password'} onClick={()=>setVisible(!visible)}>{visible?<EyeOff size={18}/>:<Eye size={18}/>}</button></div></div>
+        <button className="btn btn-primary btn-block studio-login-submit" disabled={busy}>{busy?<LoaderCircle size={18} className="spin"/>:<ArrowUpRight size={18}/>} {busy?'Please wait…':'Sign in to workspace'}</button>
+      </form>
+      <p className="studio-access-note"><LockKeyhole size={16}/> Access is limited to authorized studio team members. Need access or a password reset? Contact your super admin.</p>
       {isDemoMode&&<p className="notice">Local preview only · superadmin@demo.test / admin@demo.test / staff@demo.test · password demo1234</p>}
       </div><footer className="studio-login-footer"><span>© {new Date().getFullYear()} Tutok Pitik Studios</span><a href="/privacy">Privacy notice</a></footer>
     </section>

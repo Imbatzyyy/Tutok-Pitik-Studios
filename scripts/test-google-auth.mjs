@@ -68,7 +68,7 @@ const storageCompiled=ts.transpileModule(storageSource,{compilerOptions:{module:
 for(const pathname of ['/','/reset-password','/auth/google','/auth/callback','/admin','/admin/login','/admin/bookings']){
  const localStorage=makeStorage(),sessionStorage=makeStorage();let config;
  vm.runInNewContext(storageCompiled,{exports:{},URL,fetch(){throw new Error('No network');},window:{location:{pathname},localStorage,sessionStorage},require:id=>({createClient:(_url,_key,c)=>{config=c;return {};}})});
- const google=pathname.startsWith('/auth/');assert.equal(config.auth.flowType,google?'pkce':'implicit');const admin=pathname.startsWith('/admin');assert.equal(config.auth.detectSessionInUrl,!google&&!admin);assert.equal(config.auth.storageKey,`sb-example-auth-token${admin?'-admin':''}`);
+ const google=pathname.startsWith('/auth/');assert.equal(config.auth.flowType,google?'pkce':'implicit');const admin=pathname.startsWith('/admin');assert.equal(config.auth.detectSessionInUrl,!google&&!admin&&pathname!=='/reset-password');assert.equal(config.auth.storageKey,`sb-example-auth-token${admin?'-admin':''}`);
  config.auth.storage.setItem(config.auth.storageKey,JSON.stringify({access_token:'studio-session',provider_token:'do-not-retain',provider_refresh_token:'do-not-retain'}));
  const saved=JSON.parse(sessionStorage.getItem(config.auth.storageKey));assert.equal(saved.access_token,'studio-session');assert.equal(saved.provider_token,undefined);assert.equal(saved.provider_refresh_token,undefined);assert.equal(localStorage.getItem('sb-example-auth-token'),null);
  config.auth.storage.setItem('sb-example-auth-token-code-verifier','verifier');assert.equal(config.auth.storage.getItem('sb-example-auth-token-code-verifier'),'verifier');checks++;
@@ -84,3 +84,16 @@ for (const pathname of ['/', '/admin/login']) {
  api.setRememberMePreference(false);assert.equal(localStorage.getItem(other),'other-portal-session');assert.equal(sessionStorage.getItem(other),null);checks++;
 }
 console.log(`PASS: ${checks} auth lifecycle, customer/admin storage isolation and URL-token handling checks.`);
+
+// Opening a reset link cannot overwrite the customer or workspace session.
+{
+ const localStorage=makeStorage(),sessionStorage=makeStorage(),configs=[],api={};
+ localStorage.setItem('sb-example-auth-token','customer-session');
+ sessionStorage.setItem('sb-example-auth-token-admin','admin-session');
+ vm.runInNewContext(storageCompiled,{exports:api,URL,fetch(){throw new Error('No network');},window:{location:{pathname:'/reset-password'},localStorage,sessionStorage},require:()=>({createClient:(_url,_key,c)=>{configs.push(c);return {};}})});
+ api.createRecoveryClient();const isolated=configs[1].auth;
+ assert.equal(isolated.persistSession,false);assert.equal(isolated.autoRefreshToken,false);assert.equal(isolated.detectSessionInUrl,false);
+ assert.notEqual(isolated.storageKey,configs[0].auth.storageKey);assert.equal(isolated.storage,undefined);
+ assert.equal(localStorage.getItem('sb-example-auth-token'),'customer-session');assert.equal(sessionStorage.getItem('sb-example-auth-token-admin'),'admin-session');checks++;
+}
+console.log(`PASS: ${checks} auth checks, including an isolated in-memory recovery client.`);

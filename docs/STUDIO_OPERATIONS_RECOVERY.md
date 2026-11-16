@@ -8,6 +8,22 @@ Staff see their assigned shoots, editing and support work. Admins manage schedul
 
 Start with **Overview**, then use the booking views or calendar. Each booking has independent reservation, payment and gallery states, a preparation brief, private files, a conversation, an internal team note channel and a change history. A stale save fails without discarding the draft. Requests hold the existing slot until an approved reschedule commits. A pending booking is never automatically discarded merely because a client already submitted a GCash receipt.
 
+## Team password recovery and sign-out
+
+The workspace sign-in page has no public Forgot password action. In **Accounts & roles**, a verified super admin selects **Send password reset** for an active team account and confirms the recipient. The server derives the recipient from the Auth account, validates the super admin's MFA and workspace binding, enforces a one-minute target cooldown, five sends per target per hour and twenty per sender per hour, and records the outcome in the activity history. The existing global Auth email limit remains 100 per hour.
+
+The branded email opens the studio's HTTPS reset page. The unused recovery link expires after one hour and can be redeemed only once. Its token is kept in the URL fragment, cleared from browser history on arrival, and redeemed only after **Continue securely**. The recovery session lives in memory and does not replace customer or workspace sessions. Accounts with an enrolled authenticator must verify it before changing the password. A successful password change revokes all earlier studio session bindings; the account signs in through the workspace again.
+
+The signed `studio-auth-email` Supabase Send Email hook blocks public recovery requests for team profiles. Customer self-service recovery remains available. Keep this hook enabled when restoring or moving the project; hiding a button alone does not enforce this policy. Its `STUDIO_AUTH_EMAIL_HOOK_SECRET`, `RESEND_API_KEY`, and `RESEND_FROM_EMAIL` belong only in server secrets. Configure the matching signed hook in Supabase Auth, with `mailer_otp_exp=3600` and `rate_limit_email_sent=100`. The hook renders the shared branded Auth templates; regenerate the manifest using `npm run email:templates` after template changes. The separate super-admin endpoint generates and sends authorized team recovery links without calling public recovery.
+
+If the only super admin loses their password, recovery requires the verified Supabase project owner or another active super admin. Do not add a public team reset shortcut or disable MFA. Loss of both password and authenticator requires an account-owner assisted recovery procedure through the provider.
+
+**Sign out** opens a confirmation dialog, defaults keyboard focus to Cancel, and warns when there are unsaved changes. Cancel and Escape preserve the current workspace; confirmed sign-out ends the session.
+
+## Branded PDF exports
+
+Booking receipts, bookings reports, account directories and operations reports share the studio logo, business email/domain, A4 layout, consistent headings, currency formatting and page numbers. Table headers and branding repeat on subsequent pages. Large tables wrap long values, and empty selections state that no records match. Receipts distinguish verified payments, refunds and the outstanding balance; report booking values are not proof that money has been collected. Exported files contain private records and should be shared only with intended recipients. Downloaded PDFs are not password-encrypted.
+
 ## Payments and communications
 
 Payments remain manual GCash / external transactions. Verify the actual incoming transaction before approving its proof. A screenshot alone is not proof of settled money. Older embedded receipt images remain visible as imported proof; new images/PDFs use private storage with a 10 MB limit and expiring viewing links. Existing proof objects cannot be overwritten. Record final payments and completed refunds in the ledger. Corrections use reversal entries rather than deleting financial history. Approving a refund request does not transfer money.

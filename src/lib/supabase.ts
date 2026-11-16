@@ -91,7 +91,7 @@ export const supabase = createClient(supabaseUrl, supabaseAnonKey, {
     persistSession: true,
     autoRefreshToken: true,
     flowType: isGoogleRoute ? 'pkce' : 'implicit',
-    detectSessionInUrl: !isGoogleRoute && !isAdminPortal,
+    detectSessionInUrl: !isGoogleRoute && !isAdminPortal && window.location.pathname !== '/reset-password',
     storage: authStorage,
   },
 });
@@ -107,3 +107,10 @@ export const setRememberMePreference = (remember: boolean) => {
 };
 
 export const getRememberMePreference = getRememberPreference;
+
+// Reset links use a dedicated in-memory session. They never replace a customer's
+// session or create a studio portal binding; the owner signs in again afterward.
+export const createRecoveryClient=()=>createClient(supabaseUrl,supabaseAnonKey,{
+ global:demoFetch?{fetch:demoFetch}:undefined,
+ auth:{storageKey:`sb-${projectId}-recovery-only`,persistSession:false,autoRefreshToken:false,detectSessionInUrl:false},
+});

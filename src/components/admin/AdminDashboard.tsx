@@ -1,5 +1,5 @@
 import { OperationsOverview,OperationsBookings,OperationsClients,OperationsReports,OperationsNotifications,OperationsSchedule,OperationsSecurity,OperationsTeam } from './OperationsViews';
-import { useStudioLive,confirmNavigation } from '../../lib/studio';
+import { useStudioLive,confirmNavigation,hasUnsavedChanges } from '../../lib/studio';
 import '../../styles/studio-operations.css';
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { CalendarDays, CalendarOff, ChartColumn, Images, LogOut, MessageSquareQuote, Users, X, Menu, ArrowUpRight, RefreshCw, Wallet, Activity, Inbox, UserRound, type LucideIcon } from 'lucide-react';
@@ -9,6 +9,7 @@ import { ActivityView, InboxView } from './StudioViews';
 import { initials } from '../../lib/format';
 import type { SessionUser } from '../../lib/session';
 import AvailabilityTab from './AvailabilityTab';
+import ConfirmDialog from '../common/ConfirmDialog';
 import PortfolioTab from './PortfolioTab';
 import TestimonialsTab from './TestimonialsTab';
 import { canAccess, ROLE_LABELS, type AdminTabId } from './shared';
@@ -17,7 +18,7 @@ interface AdminDashboardProps {
   user: SessionUser;
   onClose: () => void;
   onPortfolioUpdated?: () => Promise<void> | void;
-  onLogout: () => void;
+  onLogout: () => void | Promise<void>;
   /** From the URL: /admin/<tab> or /admin/bookings/<id>. */
   initialTab?: string;
   initialBookingId?: string;
@@ -57,6 +58,8 @@ export default function AdminDashboard({ user, onClose, onPortfolioUpdated, onLo
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [active, openBookingId]);
   const [menuOpen,setMenuOpen]=useState(false);
+  const [logoutOpen,setLogoutOpen]=useState(false);
+  const [logoutHasChanges,setLogoutHasChanges]=useState(false);
   const menuRef=useModal<HTMLElement>(menuOpen,()=>setMenuOpen(false));
   useEffect(()=>{const resize=()=>{if(window.innerWidth>960)setMenuOpen(false);};window.addEventListener('resize',resize);return()=>window.removeEventListener('resize',resize);},[]);
   const [revision,setRevision]=useState(0);
@@ -117,7 +120,7 @@ export default function AdminDashboard({ user, onClose, onPortfolioUpdated, onLo
           <button type="button" className="btn btn-ghost btn-sm btn-block" onClick={()=>{if(confirmNavigation())onClose();}}>
             <ArrowUpRight size={16} /> View customer website
           </button>
-          <button type="button" className="btn btn-ghost btn-sm btn-block admin-signout" onClick={()=>{if(confirmNavigation())onLogout();}}>
+          <button type="button" className="btn btn-ghost btn-sm btn-block admin-signout" onClick={()=>{setLogoutHasChanges(hasUnsavedChanges());setLogoutOpen(true);}}>
             <LogOut size={16} /> Sign out
           </button>
         </div>
@@ -138,6 +141,19 @@ export default function AdminDashboard({ user, onClose, onPortfolioUpdated, onLo
         {active==='availability'&&<><OperationsSchedule revision={revision}/><AvailabilityTab bookings={[]}/></>}
         {active==='reviews'&&<TestimonialsTab/>}
       </main><footer className="studio-workspace-footer"><span>Tutok Pitik Studios · Made for meaningful moments</span><span>Times shown in Manila · Private live updates</span></footer></div>
+      <ConfirmDialog
+        open={logoutOpen}
+        title="Sign out of the workspace?"
+        message={logoutHasChanges
+          ? 'You have unsaved changes. Signing out will discard them. You’ll need to sign in again to access your workspace.'
+          : 'You’ll need to sign in again to access your studio workspace.'}
+        confirmLabel="Sign out"
+        cancelLabel="Cancel"
+        autoFocus="cancel"
+        icon={<LogOut size={22} />}
+        onCancel={()=>setLogoutOpen(false)}
+        onConfirm={onLogout}
+      />
     </div>
   );
 }

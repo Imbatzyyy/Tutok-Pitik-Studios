@@ -241,6 +241,7 @@ export function createDemoFetch(supabaseUrl: string): typeof fetch {
     }
     const path = url.pathname;
 
+    if (/\/users\/[^/]+\/password-reset$/.test(path)&&method==='POST')return roleOf(currentAccount(headers))==='superadmin'?json({success:true}):json({error:'Superadmin access required'},403);
     if (path === '/rest/v1/rpc/is_studio_team') return json(['superadmin','admin','staff'].includes(roleOf(currentAccount(headers))));
     if (path === '/rest/v1/rpc/studio_end_admin_session') return json(null);
     // ---------------- Auth ----------------

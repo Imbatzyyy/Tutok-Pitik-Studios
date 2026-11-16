@@ -65,3 +65,10 @@ export function accountContent(kind: "welcome" | "profile", name: unknown) {
     }),
   };
 }
+
+export function teamPasswordResetContent(name:unknown,link:string){
+ const heading='Reset your studio password';
+ const message='A super admin requested a password reset for your studio account. Use the private link below to choose your new password.';
+ const footnote='Your authenticator is still required for studio sign-in. This one-time link expires in 1 hour. If this request was unexpected, contact your super admin. Never forward this link.';
+ return {subject:heading+' · Tutok Pitik Studios',html:renderEmail({heading,preheader:message,contentHtml:`<p>Hi ${escapeHtml(name||'there')},</p><p>${message}</p>`,action:'Choose a new password',actionUrl:link,footnote}),text:`${heading}\n\n${message}\n\n${link}\n\n${footnote}`};
+}

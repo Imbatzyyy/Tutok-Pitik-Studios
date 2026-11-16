@@ -23,18 +23,21 @@ const routes = [
   ['GET', '/users/all'],
   ['PUT', '/users/target', { fullName: 'Updated fixture', role: 'customer' }],
   ['DELETE', '/users/target'],
+  ['POST', '/users/44444444-4444-4444-8444-444444444444/password-reset', {}],
 ];
 function harness({ role = 'superadmin', status = 'active', missing = false, lookupError = false, invalid = false, portal = true, portalError = false } = {}) {
   const events = [];
   const profile = { id: 'actor', role, status };
   const supabase = {
-    rpc:async (name,args)=>{if(name==='studio_service_account_update'){assert.equal(args.p_actor,'actor');assert.equal(args.p_target,'target');events.push('db.update');return {data:{id:'target',...args.p_changes},error:null};}assert.equal(name,"studio_admin_session_valid");assert.equal(args.p_user_id,"actor");return {data:portal,error:portalError?{message:"offline failure"}:null};},
+    rpc:async (name,args)=>{if(name==='studio_service_account_update'){assert.equal(args.p_actor,'actor');assert.equal(args.p_target,'target');events.push('db.update');return {data:{id:'target',...args.p_changes},error:null};}if(name==='studio_begin_password_reset'){assert.equal(args.p_actor,'actor');assert.equal(args.p_target,'44444444-4444-4444-8444-444444444444');events.push('reset.begin');return {data:'request-fixture',error:null};}if(name==='studio_finish_password_reset'){assert.equal(args.p_sent,true);events.push('reset.audit');return {data:null,error:null};}assert.equal(name,"studio_admin_session_valid");assert.equal(args.p_user_id,"actor");return {data:portal,error:portalError?{message:"offline failure"}:null};},
     auth: {
       getUser: async () => {
         events.push('auth.lookup');
         return { data: { user: invalid ? null : { id: 'actor' } }, error: invalid ? { message: 'invalid' } : null };
       },
       admin: {
+        getUserById:async()=>({data:{user:{email:'fixture@example.invalid',user_metadata:{full_name:'Fixture'}}},error:null}),
+        generateLink:async args=>{assert.equal(args.type,'recovery');assert.equal(args.email,'fixture@example.invalid');assert.equal(args.options.redirectTo,'https://tutokpitikstudios.com/reset-password?studio=1');events.push('reset.link');return {data:{properties:{action_link:'https://dhqxzrzjvgcmjjkmxlfs.supabase.co/auth/v1/verify?type=recovery&token=private-fixture'}},error:null};},
         inviteUserByEmail: async (email,options) => { events.push('auth.create'); return { data: { user: { id: 'target' } }, error: null }; },
         updateUserById: async () => { events.push('auth.update'); return { error: null }; },
         deleteUser: async () => { events.push('auth.delete'); return { error: null }; },
@@ -58,7 +61,7 @@ function harness({ role = 'superadmin', status = 'active', missing = false, look
     },
   };
   let handler;
-  let forbiddenIO = 0;
+  let forbiddenIO = 0;let emailAllowed=false;
   const blockIO = () => { forbiddenIO++; throw new Error('External I/O forbidden'); };
   const modules = {
     'npm:hono@4.13.17': { Hono }, 'npm:hono@4.13.17/cors': { cors }, 'npm:hono@4.13.17/logger': { logger },
@@ -68,9 +71,9 @@ function harness({ role = 'superadmin', status = 'active', missing = false, look
     './kv_store.tsx': { del: async (key) => { events.push(`kv.delete:${key}`); } },
   };
   const context = vm.createContext({
-    exports: {}, Request, Response, Headers, URL, AbortSignal, fetch: blockIO,
+    exports: {}, Request, Response, Headers, URL, URLSearchParams, AbortSignal, fetch: async(url,init)=>{if(!emailAllowed)return blockIO();assert.equal(url,'https://api.resend.com/emails');const payload=JSON.parse(init.body);assert.deepEqual(payload.to,['fixture@example.invalid']);assert.ok(payload.html.includes('A super admin requested'));events.push('email.send');return new Response(JSON.stringify({id:'fixture-email'}));},
     console: { log() {}, error() {}, warn() {} },
-    Deno: { env: { get: () => undefined }, serve: (fn) => { handler = fn; } },
+    Deno: { env: { get: key=>({RESEND_API_KEY:'fixture-only',RESEND_FROM_EMAIL:'Studio <fixture@example.invalid>'})[key] }, serve: (fn) => { handler = fn; } },
     require: (name) => {
       assert.ok(Object.hasOwn(modules, name), `Unexpected import: ${name}`);
       return modules[name];
@@ -80,6 +83,7 @@ function harness({ role = 'superadmin', status = 'active', missing = false, look
   return {
     events, profile,
     async request(method, path, body, authenticated = true) {
+      emailAllowed=path.endsWith('/password-reset');
       const headers = new Headers();
       if (authenticated) headers.set('Authorization', `Bearer ${token}`);
       if (body) headers.set('Content-Type', 'application/json');
@@ -105,8 +109,8 @@ for (const [method, path, body] of routes) {
       assert.equal(response.status, expected, `${method} ${path}: ${role}/${status}`);
       const payload = await response.json();
       if (allowed&&!retired) {
-        assert.equal(payload.success, true);
-        const effect = { POST: 'auth.create', GET: 'db.list', PUT: 'auth.update', DELETE: 'auth.delete' }[method];
+        assert.equal(payload.success, true);if(path.endsWith('/password-reset'))assert.deepEqual(payload,{success:true},'Never return a password reset link or token to the caller');
+        const effect = path.endsWith('/password-reset')?'email.send':{ POST: 'auth.create', GET: 'db.list', PUT: 'auth.update', DELETE: 'auth.delete' }[method];
         assert.ok(h.events.includes(effect), `Allowed ${method} must execute operation`);
         if (method === 'DELETE') assert.equal(h.events.filter(e => e.startsWith('kv.delete:')).length, 3);
       } else {

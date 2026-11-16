@@ -127,6 +127,7 @@ writeFileSync(
   new URL("auth-config.json", dir),
   JSON.stringify(manifest, null, 2) + "\n",
 );
+writeFileSync(new URL("../supabase/functions/_shared/auth-mail-templates.json",import.meta.url),JSON.stringify(manifest,null,2)+"\n");
 console.log(
   `Generated ${auth.length} branded Auth templates and rate-limit configuration (100/hour).`,
 );
