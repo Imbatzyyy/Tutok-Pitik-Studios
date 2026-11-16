@@ -5,15 +5,16 @@ export const GOOGLE_START_PATH = '/auth/google';
 export const GOOGLE_CALLBACK_PATH = '/auth/callback';
 const ATTEMPT_KEY = 'tps:google-signin';
 const MAX_AGE = 10 * 60 * 1000;
-const RETURN_PATHS = ['/', '/#contact', '/account', '/admin'] as const;
+// The dashboard is deliberately not a return path: team members land on home after Google.
+const RETURN_PATHS = ['/', '/#contact', '/account'] as const;
 type ReturnPath = (typeof RETURN_PATHS)[number];
 type Attempt = { startedAt: number; returnTo: ReturnPath };
 
-/** Where to land after Google: the booking form, the page that asked for sign-in, or home. */
+/** Where to land after Google: the booking form, the customer account, or home. */
 const returnPathFor = (booking: boolean): ReturnPath => {
   if (booking) return '/#contact';
-  const section = `/${window.location.pathname.split('/')[1] || ''}`;
-  return section === '/account' || section === '/admin' ? section : '/';
+  const pathname = window.location.pathname || '/';
+  return pathname === '/account' || pathname.startsWith('/account/') ? '/account' : '/';
 };
 
 /** Store only navigation state, never credentials or customer details. */
