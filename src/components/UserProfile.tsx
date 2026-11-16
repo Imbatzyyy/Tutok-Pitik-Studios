@@ -1,3 +1,6 @@
+import BookingWorkspace from './studio/BookingWorkspace';
+import {useStudioLive,confirmNavigation} from '../lib/studio';
+import '../styles/studio-operations.css';
 import { useEffect, useMemo, useRef, useState, type FormEvent, type PointerEvent as ReactPointerEvent } from 'react';
 import { Ban, CalendarCheck, CalendarDays, Camera, Check, Download, ExternalLink, FileText, Heart, LoaderCircle, LogOut, MapPin, MessageCircle, Receipt, Trash2, UserRound } from 'lucide-react';
 import { toast } from 'sonner';
@@ -33,7 +36,7 @@ interface UserProfileProps {
 const STEPS = ['Requested', 'Confirmed', 'Shoot day', 'Photos delivered'];
 
 const progressIndex = (booking: NormalizedBooking) => {
-  if (booking.status === 'completed') return booking.photoStatus === 'delivered' || booking.driveLink ? 3 : 2;
+  if (booking.status === 'completed') return booking.photoStatus === 'delivered' ? 3 : 2;
   if (booking.status === 'confirmed') return 1;
   return 0;
 };
@@ -269,6 +272,9 @@ export default function UserProfile({ isOpen, initialTab, user, catalog, onClose
     if (isOpen) onTabChange?.(tab);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [isOpen, tab]);
+  const [bookingRevision,setBookingRevision]=useState(0);
+  const [openBooking,setOpenBooking]=useState<string|null>(null);
+  const live=useStudioLive(user.id,false,()=>setBookingRevision(n=>n+1),isOpen&&isCustomer);
   const [bookings, setBookings] = useState<NormalizedBooking[] | null>(null);
   const [receipt, setReceipt] = useState<{ url: string; name: string } | null>(null);
   const [form, setForm] = useState({ firstName: user.firstName, lastName: user.lastName, phone: user.phone });
@@ -301,7 +307,7 @@ export default function UserProfile({ isOpen, initialTab, user, catalog, onClose
     return () => {
       cancelled = true;
     };
-  }, [isOpen, isCustomer, user.id]);
+  }, [isOpen, isCustomer, user.id, bookingRevision]);
 
   const favoriteItems = useMemo(() => {
     const seen = new Set<string>();
@@ -394,7 +400,7 @@ export default function UserProfile({ isOpen, initialTab, user, catalog, onClose
 
   return (
     <>
-      <Modal open={isOpen} onClose={onClose} size="lg" className="profile-modal">
+      <Modal open={isOpen} onClose={()=>{if(confirmNavigation())onClose();}} size="lg" className="profile-modal">
         <div className="profile-head">
           <div className="avatar avatar-lg">
             {user.profilePicture ? <img src={user.profilePicture} alt="" /> : <span>{initials(user.fullName)}</span>}
@@ -414,7 +420,7 @@ export default function UserProfile({ isOpen, initialTab, user, catalog, onClose
             {tabs.map((entry) => {
               const Icon = entry.icon;
               return (
-                <button key={entry.id} type="button" role="tab" aria-selected={tab === entry.id} className={tab === entry.id ? 'is-active' : ''} onClick={() => setTab(entry.id)}>
+                <button key={entry.id} type="button" role="tab" aria-selected={tab === entry.id} className={tab === entry.id ? 'is-active' : ''} onClick={() => {if(confirmNavigation())setTab(entry.id);}}>
                   <Icon size={16} aria-hidden="true" /> {entry.label}
                   {entry.count ? <span className="tab-count">{entry.count}</span> : null}
                 </button>
@@ -436,7 +442,7 @@ export default function UserProfile({ isOpen, initialTab, user, catalog, onClose
                   <button type="button" className="btn btn-primary" onClick={() => { onClose(); onBook(); }}>Book a session</button>
                 </div>
               ) : (
-                bookings.map((booking) => <BookingCard key={booking.id} booking={booking} onViewReceipt={viewReceipt} />)
+                <><p role="status">Booking updates: {live}</p>{openBooking?<BookingWorkspace id={openBooking} user={user} revision={bookingRevision} onClose={()=>setOpenBooking(null)} onChanged={()=>setBookingRevision(n=>n+1)}/>:bookings.map((booking) => <div key={booking.id}><BookingCard booking={booking} onViewReceipt={viewReceipt}/><button className="btn btn-secondary" onClick={()=>setOpenBooking(booking.id)}>Manage booking · Messages & requests</button></div>)}</>
               )}
             </div>
           )}

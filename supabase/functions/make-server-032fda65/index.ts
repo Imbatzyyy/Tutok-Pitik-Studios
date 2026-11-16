@@ -340,47 +340,8 @@ app.post("/make-server-032fda65/send-password-reset-email", async (c) => {
 });
 
 app.post("/make-server-032fda65/bookings", async (c) => {
-  try {
-    const auth = await requireAuthenticatedUser(c);
-    if (!auth?.user) {
-      return c.json({ error: 'Unauthorized' }, 401);
-    }
-
-    const bookingData = await c.req.json();
-    const payload = {
-      user_id: auth.user.id,
-      full_name: bookingData.full_name,
-      email: bookingData.email || auth.user.email,
-      phone: bookingData.phone,
-      service: bookingData.service,
-      booking_date: bookingData.booking_date,
-      start_time: bookingData.start_time,
-      end_time: bookingData.end_time,
-      duration: bookingData.duration,
-      price: bookingData.price,
-      transportation_fee: bookingData.transportation_fee ?? bookingData.transportation ?? 0,
-      total_price: bookingData.total_price,
-      location: bookingData.location,
-      message: bookingData.message || '',
-      status: 'pending',
-    };
-
-    const { data: newBooking, error } = await supabase
-      .from('bookings')
-      .insert(payload)
-      .select('*')
-      .single();
-
-    if (error) {
-      return c.json({ error: error.message }, 500);
-    }
-
-    console.log('Booking created successfully:', newBooking.id);
-    return c.json({ success: true, booking: newBooking });
-  } catch (error) {
-    console.error('Create booking error:', error);
-    return c.json({ error: error.message }, 500);
-  }
+ const auth=await requireAuthenticatedProfile(c);if(!auth)return c.json({error:'Unauthorized'},401);
+ return c.json({error:'This legacy action is retired. Use the studio workspace and its validated booking or account actions.'},410);
 });
 
 app.get("/make-server-032fda65/bookings", async (c) => {
@@ -408,140 +369,18 @@ app.get("/make-server-032fda65/bookings", async (c) => {
 });
 
 app.get("/make-server-032fda65/bookings/all", async (c) => {
-  try {
-    const auth = await requireAuthenticatedProfile(c);
-    if (!auth) {
-      return c.json({ error: 'Unauthorized' }, 401);
-    }
-
-    if (!adminRoles.includes(auth.profile.role)) {
-      return c.json({ error: 'Forbidden - Admin access required' }, 403);
-    }
-
-    const { data: allBookings, error } = await supabase
-      .from('bookings')
-      .select('*')
-      .order('created_at', { ascending: false });
-
-    if (error) {
-      return c.json({ error: error.message }, 500);
-    }
-
-    return c.json({ success: true, bookings: allBookings || [] });
-  } catch (error) {
-    console.error('Get all bookings error:', error);
-    return c.json({ error: error.message }, 500);
-  }
+ const auth=await requireAuthenticatedProfile(c);if(!auth)return c.json({error:'Unauthorized'},401);
+ return c.json({error:'This legacy action is retired. Use the studio workspace and its validated booking or account actions.'},410);
 });
 
 app.put("/make-server-032fda65/bookings/:id", async (c) => {
-  try {
-    const auth = await requireAuthenticatedProfile(c);
-    if (!auth) {
-      return c.json({ error: 'Unauthorized' }, 401);
-    }
-
-    const bookingId = c.req.param('id');
-    const updates = await c.req.json();
-
-    const { data: booking, error: bookingError } = await supabase
-      .from('bookings')
-      .select('*')
-      .eq('id', bookingId)
-      .maybeSingle();
-
-    if (bookingError) {
-      return c.json({ error: bookingError.message }, 500);
-    }
-
-    if (!booking) {
-      return c.json({ error: 'Booking not found' }, 404);
-    }
-
-    const isAdmin = adminRoles.includes(auth.profile.role);
-    if (!isAdmin) {
-      return c.json({ error: 'Only studio staff can update bookings' }, 403);
-    }
-
-    const updatePayload: Record<string, unknown> = {
-      updated_at: new Date().toISOString(),
-    };
-
-    ['status', 'service', 'booking_date', 'start_time', 'end_time', 'duration', 'price', 'transportation_fee', 'total_price', 'location', 'message'].forEach((field) => {
-      if (updates[field] !== undefined) {
-        updatePayload[field] = updates[field];
-      }
-    });
-
-    const previousStatus = booking.status;
-    const { data: updatedBooking, error: updateError } = await supabase
-      .from('bookings')
-      .update(updatePayload)
-      .eq('id', bookingId)
-      .select('*')
-      .single();
-
-    if (updateError) {
-      return c.json({ error: updateError.message }, 500);
-    }
-
-    if (isAdmin && updates.status === 'confirmed' && previousStatus !== 'confirmed') {
-      try {
-        await dispatchBookingEmails(bookingId, auth.accessToken);
-      } catch (emailError) {
-        console.error('Booking confirmation email error:', emailError);
-      }
-    }
-
-    return c.json({ success: true, booking: updatedBooking });
-  } catch (error) {
-    console.error('Update booking error:', error);
-    return c.json({ error: error.message }, 500);
-  }
+ const auth=await requireAuthenticatedProfile(c);if(!auth)return c.json({error:'Unauthorized'},401);
+ return c.json({error:'This legacy action is retired. Use the studio workspace and its validated booking or account actions.'},410);
 });
 
 app.delete("/make-server-032fda65/bookings/:id", async (c) => {
-  try {
-    const auth = await requireAuthenticatedProfile(c);
-    if (!auth) {
-      return c.json({ error: 'Unauthorized' }, 401);
-    }
-
-    if (!contentAdminRoles.includes(auth.profile.role)) return c.json({error:'Forbidden'},403);
-    const bookingId = c.req.param('id');
-    const { data: booking, error: bookingError } = await supabase
-      .from('bookings')
-      .select('*')
-      .eq('id', bookingId)
-      .maybeSingle();
-
-    if (bookingError) {
-      return c.json({ error: bookingError.message }, 500);
-    }
-
-    if (!booking) {
-      return c.json({ error: 'Booking not found' }, 404);
-    }
-
-    const isAdmin = adminRoles.includes(auth.profile.role);
-    if (booking.user_id !== auth.user.id && !isAdmin) {
-      return c.json({ error: 'Forbidden' }, 403);
-    }
-
-    const { error: deleteError } = await supabase
-      .from('bookings')
-      .delete()
-      .eq('id', bookingId);
-
-    if (deleteError) {
-      return c.json({ error: deleteError.message }, 500);
-    }
-
-    return c.json({ success: true });
-  } catch (error) {
-    console.error('Delete booking error:', error);
-    return c.json({ error: error.message }, 500);
-  }
+ const auth=await requireAuthenticatedProfile(c);if(!auth)return c.json({error:'Unauthorized'},401);
+ return c.json({error:'This legacy action is retired. Use the studio workspace and its validated booking or account actions.'},410);
 });
 
 
@@ -858,24 +697,17 @@ app.post("/make-server-032fda65/users", async (c) => {
       return c.json({ error: 'Forbidden - Superadmin access required' }, 403);
     }
 
-    const { email, password, fullName, role, username, status } = await c.req.json();
+    const { email, fullName, role, username } = await c.req.json();
 
-    if (!email || !password || !fullName) {
-      return c.json({ error: 'Email, password, and full name are required' }, 400);
+    if (typeof email!=='string'||!/^\S+@\S+\.\S+$/.test(email)||typeof fullName!=='string'||fullName.trim().length<2||fullName.length>200) {
+      return c.json({ error: 'A valid email and full name are required' }, 400);
     }
 
-    if (role && !['customer','staff','admin','superadmin'].includes(role)) return c.json({error:'Invalid role'},400);
-    if (status && !['active','inactive','suspended'].includes(status)) return c.json({error:'Invalid status'},400);
+    if (!['staff','admin','superadmin'].includes(role)) return c.json({error:'Invalid role'},400);
 
-    const { data: createdAuthUser, error: createError } = await supabase.auth.admin.createUser({
-      email,
-      password,
-      email_confirm: true,
-      user_metadata: {
-        full_name: fullName,
-        username,
-        role: role || 'customer',
-      },
+    const { data: createdAuthUser, error: createError } = await supabase.auth.admin.inviteUserByEmail(email.trim(),{
+      redirectTo:'https://tutokpitikstudios.com/reset-password?studio=1',
+      data:{full_name:fullName.trim(),username:username||undefined}
     });
 
     if (createError || !createdAuthUser.user) {
@@ -886,8 +718,8 @@ app.post("/make-server-032fda65/users", async (c) => {
       .from('users')
       .update({
         username: username || null,
-        role: role || 'customer',
-        status: status || 'active',
+        role,
+        status:'active',
       })
       .eq('id', createdAuthUser.user.id)
       .select('*')
@@ -946,6 +778,7 @@ app.put("/make-server-032fda65/users/:id", async (c) => {
 
     const targetUserId = c.req.param('id');
     const updates = await c.req.json();
+    if ('password' in updates) return c.json({error:'The account owner must reset their own password.'},400);
 
     if (updates.role !== undefined && !['customer','staff','admin','superadmin'].includes(updates.role)) return c.json({error:'Invalid role'},400);
     if (updates.status !== undefined && !['active','inactive','suspended'].includes(updates.status)) return c.json({error:'Invalid status'},400);
@@ -973,7 +806,7 @@ app.put("/make-server-032fda65/users/:id", async (c) => {
     }
 
     const authUpdates: Record<string, unknown> = {};
-    if (typeof updates.password === 'string' && updates.password) authUpdates.password = updates.password;
+    // Passwords are set only by the account owner through provider recovery/invitation.
     if (typeof updates.fullName === 'string' || typeof updates.username === 'string' || typeof updates.role === 'string') {
       authUpdates.user_metadata = {
         full_name: updatedUser.full_name,
@@ -997,38 +830,8 @@ app.put("/make-server-032fda65/users/:id", async (c) => {
 });
 
 app.delete("/make-server-032fda65/users/:id", async (c) => {
-  try {
-    const auth = await requireAuthenticatedProfile(c);
-    if (!auth) {
-      return c.json({ error: 'Unauthorized' }, 401);
-    }
-
-    if (auth.profile.role !== 'superadmin') {
-      return c.json({ error: 'Forbidden - Superadmin access required' }, 403);
-    }
-
-    const targetUserId = c.req.param('id');
-
-    if (targetUserId === auth.user.id) {
-      return c.json({ error: 'You cannot delete your own account' }, 400);
-    }
-
-    const { error: deleteError } = await supabase.auth.admin.deleteUser(targetUserId);
-    if (deleteError) {
-      return c.json({ error: deleteError.message }, 500);
-    }
-
-    await kv.del(`user:${targetUserId}`);
-    await kv.del(`favorites:${targetUserId}`);
-    await kv.del(`user_bookings:${targetUserId}`);
-    
-    console.log('User deleted successfully:', targetUserId);
-    return c.json({ success: true });
-
-  } catch (error) {
-    console.error('Delete user error:', error);
-    return c.json({ error: error.message }, 500);
-  }
+ const auth=await requireAuthenticatedProfile(c);if(!auth)return c.json({error:'Unauthorized'},401);
+ return c.json({error:'This legacy action is retired. Use the studio workspace and its validated booking or account actions.'},410);
 });
 
 Deno.serve(app.fetch);

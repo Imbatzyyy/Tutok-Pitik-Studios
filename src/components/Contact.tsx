@@ -333,6 +333,7 @@ export default function Contact({ user, availability, prefill, onSuccess, onRequ
       }
 
       const receiptPath = await uploadToBucket(RECEIPTS_BUCKET, `${user.id}/${randomId()}.jpg`, receipt.blob);
+      if(!receiptPath)throw new Error('Your receipt could not be uploaded securely. Please retry.');
       const message = buildBookingMessage(draft.notes, {
         paymentMethod: 'GCash',
         paymentReference: reference.trim(),
@@ -362,9 +363,14 @@ export default function Contact({ user, availability, prefill, onSuccess, onRequ
         status: 'pending',
       };
 
-      const { data: booking, error } = await supabase.from('bookings').insert(row).select('*').single();
+      const keyName=`tps-booking-submit:${user.id}`;
+      const fingerprint=JSON.stringify([row.booking_date,row.start_time,row.end_time,row.service,row.location,reference.trim()]);
+      let request: {key:string;fingerprint:string};try{request=JSON.parse(sessionStorage.getItem(keyName)||'null');}catch{request=null as any;}
+      if(!request||request.fingerprint!==fingerprint){request={key:crypto.randomUUID(),fingerprint};sessionStorage.setItem(keyName,JSON.stringify(request));}
+      const { data: booking, error } = await supabase.rpc('studio_create_booking',{p_payload:row,p_key:request.key});
       if (error || !booking) throw new Error(error?.message || 'We could not save your booking.');
 
+      sessionStorage.removeItem(keyName);
       void notify('/send-booking-email', { bookingId: booking.id });
 
       const success: BookingSuccess = {

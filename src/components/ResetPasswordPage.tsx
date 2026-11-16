@@ -5,6 +5,7 @@ import { supabase } from '../lib/supabase';
 import { errorMessage } from '../lib/api';
 
 export default function ResetPasswordPage() {
+  const studio = new URLSearchParams(location.search).get('studio')==='1';
   const [password, setPassword] = useState('');
   const [confirm, setConfirm] = useState('');
   const [status, setStatus] = useState<'checking' | 'ready' | 'invalid' | 'success'>('checking');
@@ -37,6 +38,7 @@ export default function ResetPasswordPage() {
     try {
       const { error: updateError } = await supabase.auth.updateUser({ password });
       if (updateError) throw updateError;
+      await supabase.auth.signOut({scope:'local'});
       setStatus('success');
       window.history.replaceState({}, document.title, '/reset-password');
     } catch (err) {
@@ -77,8 +79,8 @@ export default function ResetPasswordPage() {
               </button>
             </form>
           )}
-          <a className="btn btn-ghost btn-block reset-home" href="/">
-            <ArrowLeft size={16} /> Back to the website
+          <a className="btn btn-ghost btn-block reset-home" href={studio?'/admin/login':'/'}>
+            <ArrowLeft size={16} /> {studio?'Go to studio sign-in':'Back to the website'}
           </a>
         </div>
       </div>

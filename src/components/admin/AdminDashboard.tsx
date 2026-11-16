@@ -1,20 +1,17 @@
+import { OperationsOverview,OperationsBookings,OperationsClients,OperationsReports,OperationsNotifications,OperationsSchedule,OperationsSecurity,OperationsTeam } from './OperationsViews';
+import { useStudioLive,confirmNavigation } from '../../lib/studio';
+import '../../styles/studio-operations.css';
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { CalendarDays, CalendarOff, ChartColumn, Images, LogOut, MessageSquareQuote, Users, X, Menu, ArrowUpRight, RefreshCw, Wallet, Activity, Inbox, UserRound, type LucideIcon } from 'lucide-react';
 import { useModal } from '../../hooks/useModal';
 import logo from '../../assets/logo-160.png';
-import { PaymentsView, CustomersView, ActivityView, InboxView } from './StudioViews';
-import { normalizeBooking, type NormalizedBooking } from '../../lib/bookings';
+import { ActivityView, InboxView } from './StudioViews';
 import { initials } from '../../lib/format';
 import type { SessionUser } from '../../lib/session';
-import { supabase } from '../../lib/supabase';
 import AvailabilityTab from './AvailabilityTab';
-import BookingsTab from './BookingsTab';
-import OverviewTab from './OverviewTab';
 import PortfolioTab from './PortfolioTab';
 import TestimonialsTab from './TestimonialsTab';
-import UsersTab from './UsersTab';
-import { canAccess, normalizeUser, ROLE_LABELS, type AdminTabId, type AdminUser } from './shared';
-import { resolveAvatarUrl } from '../../lib/images';
+import { canAccess, ROLE_LABELS, type AdminTabId } from './shared';
 
 interface AdminDashboardProps {
   user: SessionUser;
@@ -38,6 +35,9 @@ const NAV: { id: AdminTabId; label: string; icon: LucideIcon }[] = [
   { id: 'availability', label: 'Availability', icon: CalendarOff },
   { id: 'reviews', label: 'Testimonials', icon: MessageSquareQuote },
   { id: 'inbox', label: 'Inquiries', icon: Inbox },
+  { id: 'notifications', label: 'Notifications', icon: Inbox },
+  { id: 'reports', label: 'Reports', icon: ChartColumn },
+  { id: 'security', label: 'Security & health', icon: Activity },
   { id: 'activity', label: 'Activity', icon: Activity },
 ];
 
@@ -59,70 +59,13 @@ export default function AdminDashboard({ user, onClose, onPortfolioUpdated, onLo
   const [menuOpen,setMenuOpen]=useState(false);
   const menuRef=useModal<HTMLElement>(menuOpen,()=>setMenuOpen(false));
   useEffect(()=>{const resize=()=>{if(window.innerWidth>960)setMenuOpen(false);};window.addEventListener('resize',resize);return()=>window.removeEventListener('resize',resize);},[]);
-  const [refreshing,setRefreshing]=useState(false);
-  const [updated,setUpdated]=useState<Date|null>(null);
-
-  const [bookings, setBookings] = useState<NormalizedBooking[]>([]);
-  const [bookingsState, setBookingsState] = useState<LoadState>('loading');
-  const [users, setUsers] = useState<AdminUser[]>([]);
-  const [usersState, setUsersState] = useState<LoadState>('loading');
-
-  const needsBookings = canAccess(user.role, 'bookings');
-  const needsUsers = canAccess(user.role, 'users');
-
-  const loadBookings = useCallback(async () => {
-    if (!needsBookings) return;
-    setBookingsState((state) => (state === 'ready' ? state : 'loading'));
-    const { data, error } = await loadAll('bookings');
-    if (error) {
-      console.error('Could not load bookings:', error);
-      setBookingsState('error');
-      return;
-    }
-    setBookings((data || []).map(normalizeBooking));
-    setBookingsState('ready');
-    setUpdated(new Date());
-  }, [needsBookings]);
-
-  const loadUsers = useCallback(async () => {
-    if (!needsUsers) return;
-    setUsersState((state) => (state === 'ready' ? state : 'loading'));
-    const { data, error } = await loadAll('users');
-    if (error) {
-      console.error('Could not load users:', error);
-      setUsersState('error');
-      return;
-    }
-    setUsers(await Promise.all((data || []).map(async (row) => ({ ...normalizeUser(row), profilePicture: await resolveAvatarUrl(row.profile_picture_url) }))));
-    setUsersState('ready');
-  }, [needsUsers]);
-
-  useEffect(() => {
-    void loadBookings();
-    void loadUsers();
-  }, [loadBookings, loadUsers]);
-
-  const replaceBooking = useCallback((next: NormalizedBooking) => {
-    setBookings((current) => current.map((booking) => (booking.id === next.id ? next : booking)));
-  }, []);
-
-  const removeBooking = useCallback((id: string) => {
-    setBookings((current) => current.filter((booking) => booking.id !== id));
-  }, []);
-
-  const openBooking = (id: string) => {
-    setFocusBookingId(id);
-    setActive('bookings');
-  };
-
-  const refresh = async () => { setRefreshing(true); try { await Promise.all([loadBookings(),loadUsers()]); } finally { setRefreshing(false); } };
-  useEffect(() => {
-    const timer=window.setInterval(()=>{if(!document.hidden)void loadBookings();},60_000);
-    const visible=()=>{if(!document.hidden)void loadBookings();};
-    document.addEventListener('visibilitychange',visible);
-    return()=>{clearInterval(timer);document.removeEventListener('visibilitychange',visible);};
-  },[loadBookings]);
-  const pendingCount = bookings.filter((booking) => booking.status === 'pending').length;
+  const [revision,setRevision]=useState(0);
+  const [bookingView,setBookingView]=useState('');
+  const refresh=useCallback(()=>setRevision(n=>n+1),[]);
+  const live=useStudioLive(user.id,true,refresh);
+  const openBooking=(id:string)=>{setFocusBookingId(id);setOpenBookingId(id);setActive('bookings');};
+  const openView=(view:string)=>{setBookingView(view);setFocusBookingId(null);setOpenBookingId(null);setActive('bookings');};
+  const pendingCount=0;
 
   return (
     <div className={`admin-shell studio-workspace ${menuOpen?'studio-menu-open':''}`}>
@@ -148,7 +91,7 @@ export default function AdminDashboard({ user, onClose, onPortfolioUpdated, onLo
               type="button"
               className={active === id ? 'is-active' : ''}
               aria-current={active === id ? 'page' : undefined}
-              onClick={() => {setActive(id);setMenuOpen(false);setFocusBookingId(null);setOpenBookingId(null);}}
+              onClick={() => {if(!confirmNavigation())return;setActive(id);setMenuOpen(false);setFocusBookingId(null);setOpenBookingId(null);}}
             >
               <Icon size={18} />
               <span>{label}</span>
@@ -171,53 +114,30 @@ export default function AdminDashboard({ user, onClose, onPortfolioUpdated, onLo
               <span>{ROLE_LABELS[user.role]}</span>
             </div>
           </div>
-          <button type="button" className="btn btn-ghost btn-sm btn-block" onClick={onClose}>
+          <button type="button" className="btn btn-ghost btn-sm btn-block" onClick={()=>{if(confirmNavigation())onClose();}}>
             <ArrowUpRight size={16} /> View customer website
           </button>
-          <button type="button" className="btn btn-ghost btn-sm btn-block admin-signout" onClick={onLogout}>
+          <button type="button" className="btn btn-ghost btn-sm btn-block admin-signout" onClick={()=>{if(confirmNavigation())onLogout();}}>
             <LogOut size={16} /> Sign out
           </button>
         </div>
       </aside>
 
-      <div className="studio-workspace-body"><header className="studio-topbar"><div><button className="icon-btn studio-menu-toggle" aria-label="Open navigation" aria-expanded={menuOpen} onClick={()=>setMenuOpen(true)}><Menu size={21}/></button><span className="studio-breadcrumb">Workspace <span>/</span> <strong>{NAV.find(t=>t.id===active)?.label}</strong></span></div><div className="studio-topbar-actions"><span className="studio-sync"><i/>{bookingsState==='error'?'Refresh needed':updated?`Updated ${updated.toLocaleTimeString('en-PH',{hour:'numeric',minute:'2-digit',timeZone:'Asia/Manila'})}`:'Connecting…'}</span><button className="icon-btn" aria-label="Refresh data" disabled={refreshing} onClick={()=>void refresh()}><RefreshCw size={17} className={refreshing?'spin':''}/></button><span className="studio-role">{ROLE_LABELS[user.role]}</span><span className="avatar studio-topbar-avatar">{initials(user.fullName)}</span></div></header>
+      <div className="studio-workspace-body"><header className="studio-topbar"><div><button className="icon-btn studio-menu-toggle" aria-label="Open navigation" aria-expanded={menuOpen} onClick={()=>setMenuOpen(true)}><Menu size={21}/></button><span className="studio-breadcrumb">Workspace <span>/</span> <strong>{NAV.find(t=>t.id===active)?.label}</strong></span></div><div className="studio-topbar-actions"><span className={`studio-sync ops-live-${live.toLowerCase()}`} role="status"><i/>{live}</span><button className="icon-btn" aria-label="Refresh data" onClick={refresh}><RefreshCw size={17}/></button><span className="studio-role">{ROLE_LABELS[user.role]}</span><span className="avatar studio-topbar-avatar">{initials(user.fullName)}</span></div></header>
       <main className="admin-main" id="admin-main" tabIndex={-1}>
-        {active === 'overview' && (
-          <OverviewTab user={user} onNavigate={setActive} bookings={bookings} bookingsState={bookingsState} users={users} onOpenBooking={openBooking} onRefresh={loadBookings} />
-        )}
-        {active === 'bookings' && (
-          <BookingsTab
-            user={user}
-            bookings={bookings}
-            state={bookingsState}
-            onReload={loadBookings}
-            onReplace={replaceBooking}
-            onRemove={removeBooking}
-            focusId={focusBookingId}
-            onFocusHandled={() => setFocusBookingId(null)}
-            onOpenChange={setOpenBookingId}
-          />
-        )}
-        {active === 'payments' && <PaymentsView bookings={bookings} onOpen={openBooking} state={bookingsState}/>}
-        {active === 'customers' && <CustomersView bookings={bookings} onOpen={openBooking} state={bookingsState}/>}
-        {active === 'activity' && <ActivityView onOpen={openBooking}/>}
-        {active === 'inbox' && <InboxView/>}
-        {active === 'users' && <UsersTab currentUser={user} users={users} state={usersState} onReload={loadUsers} />}
-        {active === 'portfolio' && <PortfolioTab user={user} onChanged={onPortfolioUpdated} />}
-        {active === 'availability' && <AvailabilityTab bookings={bookings} />}
-        {active === 'reviews' && <TestimonialsTab />}
-      </main><footer className="studio-workspace-footer"><span>Tutok Pitik Studios · Made for meaningful moments</span><span>Times shown in Manila · Bookings refresh every minute</span></footer></div>
+        {active==='overview'&&<OperationsOverview user={user} revision={revision} onOpen={openBooking} onView={openView}/>}
+        {(active==='bookings'||active==='payments')&&<OperationsBookings user={user} revision={revision} focusId={focusBookingId} initialView={active==='payments'?'payments':bookingView} onOpenChange={id=>{setOpenBookingId(id);if(!id)setFocusBookingId(null);}}/>}
+        {active==='customers'&&<OperationsClients revision={revision} onOpen={openBooking}/>}
+        {active==='reports'&&<OperationsReports revision={revision}/>}
+        {active==='notifications'&&<OperationsNotifications revision={revision} admin={user.role!=='staff'} onOpen={openBooking}/>}
+        {active==='security'&&<OperationsSecurity user={user} revision={revision}/>}
+        {active==='users'&&<OperationsTeam user={user} revision={revision}/>}
+        {active==='activity'&&<ActivityView key={revision} onOpen={openBooking}/>}
+        {active==='inbox'&&<InboxView key={revision}/>}
+        {active==='portfolio'&&<PortfolioTab user={user} onChanged={onPortfolioUpdated}/>}
+        {active==='availability'&&<><OperationsSchedule revision={revision}/><AvailabilityTab bookings={[]}/></>}
+        {active==='reviews'&&<TestimonialsTab/>}
+      </main><footer className="studio-workspace-footer"><span>Tutok Pitik Studios · Made for meaningful moments</span><span>Times shown in Manila · Private live updates</span></footer></div>
     </div>
   );
-}
-
-// Page through all records rather than silently stopping at the API row limit.
-async function loadAll(table: 'bookings'|'users') {
-  const rows:any[]=[];
-  for(let page=0;page<100;page++){
-    const {data,error}=await supabase.from(table).select('*').order('created_at',{ascending:false}).order('id',{ascending:false}).range(page*500,(page+1)*500-1);
-    if(error)return {data:null,error};
-    rows.push(...(data||[]));if(!data||data.length<500)return {data:rows,error:null};
-  }
-  return {data:null,error:new Error('The dataset is too large to load safely.')};
 }

@@ -75,6 +75,7 @@ for (const kind of [
   "customer_requested",
   "studio_requested",
   "customer_confirmed",
+  "booking_cancelled", "request_received", "request_resolved", "booking_message", "payment_rejected", "gallery_ready", "shoot_reminder", "delivery_overdue",
 ]) {
   const content = emailContent({ ...base, kind });
   assert(!content.html.includes("<script>"));
@@ -184,3 +185,6 @@ for (const kind of ['confirmation', 'invite', 'magic_link', 'email_change', 'rec
 }
 assert(authConfig.mailer_templates_reauthentication_content.includes('{{ .Token }}'));
 console.log('Branded account templates preserve secure provider links and escape profile values.');
+
+for(const kind of ['request_received','delivery_overdue']){const job={...base,kind,recipient:'wrong@example.invalid',payload:{...base.payload,studio:true,notice:'<script>unsafe</script>'}};const content=emailContent(job);assert(content.html.includes('/admin/bookings/'));assert(content.html.includes('&lt;script&gt;unsafe'));assert(!content.html.includes('<script>'));await sendJob(job,config,fetcher);assert.deepEqual(requests.at(-1).body.to,['tutokpitikstudios@gmail.com']);}
+console.log('All workflow templates and server-selected studio recipients verified.');

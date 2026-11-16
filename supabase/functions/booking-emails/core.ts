@@ -3,6 +3,7 @@ import {
   SITE,
   renderEmail,
   detailRows,
+  escapeHtml,
 } from "../_shared/email.ts";
 export { STUDIO_EMAIL } from "../_shared/email.ts";
 const money = (value: unknown) =>
@@ -11,19 +12,21 @@ const money = (value: unknown) =>
   );
 export function emailContent(job: any) {
   const b = job.payload;
-  const studio = job.kind === "studio_requested";
+  const studio = job.kind === "studio_requested" || b.studio===true;
   const confirmed = job.kind === "customer_confirmed";
   const reference = `TPS-${String(b.id).slice(0, 6).toUpperCase()}`;
-  const heading = studio
+  const headings: Record<string,string>={booking_cancelled:"Your booking was cancelled",request_received:"A booking request needs review",request_resolved:"Your booking request was updated",booking_message:"You have a new booking message",payment_rejected:"Your payment proof needs attention",gallery_ready:"Your gallery is ready",shoot_reminder:"Your photography session is coming up",delivery_overdue:"A gallery delivery needs attention"};
+  const heading = headings[job.kind] || (studio
     ? "New booking request"
     : confirmed
       ? "Your booking is confirmed"
-      : "We received your booking request";
-  const message = studio
+      : "We received your booking request");
+  const messages:Record<string,string>={booking_cancelled:"This reservation is now cancelled. Open your booking for the decision and any refund request status.",request_received:"Review the requested change in the studio workspace. The existing reservation remains in place until an approved change is saved.",request_resolved:"Open your booking to see the studio response and your current schedule.",booking_message:"There is a new message about your booking. Sign in to read and reply securely.",payment_rejected:"The submitted proof could not be verified. Review the explanation below and submit corrected proof from your booking.",gallery_ready:"Your photographs are ready to view. Open your booking to access the gallery and share any revision request.",shoot_reminder:"Your session is within the next 24 hours. Review your schedule, venue and preparation details.",delivery_overdue:"The delivery due date has passed. Review the gallery progress and contact the client with an update."};
+  const message = messages[job.kind] || (studio
     ? "A new booking is ready for review in your studio dashboard. Check the submitted GCash receipt before approving it."
     : confirmed
       ? "The studio has approved your booking. Your confirmed session details are below."
-      : "Your booking request and GCash receipt have been submitted. The studio will review your payment and availability, then send a separate confirmation. This acknowledgment does not confirm payment.";
+      : "Your booking request and GCash receipt have been submitted. The studio will review your payment and availability, then send a separate confirmation. This acknowledgment does not confirm payment.");
   const rows: [string, unknown][] = [
     ["Reference", reference],
     ["Client", b.full_name],
@@ -37,6 +40,9 @@ export function emailContent(job: any) {
     ["Session total", money(b.total_price)],
     ["Transportation included", money(b.transportation_fee)],
   ];
+  if (b.notice) rows.push(["Update",b.notice]);
+  if (b.remaining_balance!==undefined)rows.push(["Outstanding balance",money(b.remaining_balance)]);
+  if (b.delivery_due)rows.push(["Delivery due",b.delivery_due]);
   if (studio)
     rows.push(
       ["Customer email", b.email],
@@ -47,15 +53,16 @@ export function emailContent(job: any) {
     heading,
     message,
     ...rows.map(([k, v]) => `${k}: ${String(v ?? "")}`),
-    `Open ${studio ? "the admin dashboard" : "Profile → Bookings"}: ${SITE}`,
+    `Open ${studio ? "the admin dashboard" : "Profile → Bookings"}: ${studio ? `${SITE}/admin/bookings/${b.id}` : `${SITE}/account/bookings`}`,
     `Questions? ${STUDIO_EMAIL}`,
   ].join("\n\n");
   const html = renderEmail({
     heading,
     preheader: message,
-    contentHtml: `<p style="margin:0">${message}</p>${detailRows(rows)}`,
+    contentHtml: `<p style="margin:0">${escapeHtml(message)}</p>${detailRows(rows)}`,
+    actionUrl: studio ? `${SITE}/admin/bookings/${b.id}` : `${SITE}/account/bookings`,
     action: studio ? "Open studio dashboard" : "View my bookings",
-    footnote: `Sign in, then open ${studio ? "Admin" : "Profile → Bookings"}. Payment receipts are available only through your authenticated account.`,
+    footnote: `Sign in ${studio ? "through the studio workspace" : "to your account"} to view this booking. Payment receipts are available only through your authenticated account.`,
   });
   return { subject: `${heading} · ${reference}`, html, text };
 }
@@ -79,7 +86,7 @@ export async function sendJob(
     },
     body: JSON.stringify({
       from: config.from,
-      to: [job.kind === "studio_requested" ? STUDIO_EMAIL : job.recipient],
+      to: [job.kind === "studio_requested" || job.payload.studio===true ? STUDIO_EMAIL : job.recipient],
       reply_to: STUDIO_EMAIL,
       ...content,
     }),

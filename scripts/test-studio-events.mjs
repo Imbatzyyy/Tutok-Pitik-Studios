@@ -1,0 +1,13 @@
+import assert from 'node:assert/strict';
+import {test} from 'node:test';
+import {createHmac} from 'node:crypto';
+import {verifyEvent} from '../netlify/functions/resend-events.mjs';
+const secret='whsec_'+Buffer.from('test-secret-only').toString('base64');const now=Date.now(),id='msg-fixture',stamp=String(Math.floor(now/1000));
+const body=JSON.stringify({type:'email.delivered',created_at:new Date().toISOString(),data:{email_id:'fixture-email'}});
+const signature=createHmac('sha256',Buffer.from(secret.slice(6),'base64')).update(`${id}.${stamp}.${body}`).digest('base64');
+const headers=()=>new Headers({'svix-id':id,'svix-timestamp':stamp,'svix-signature':`v1,${signature}`});
+test('Authentic event body accepted with its signed ID',()=>assert.deepEqual(verifyEvent(body,headers(),secret,now),{id,event:JSON.parse(body)}));
+test('Tampered payload is rejected',()=>assert.throws(()=>verifyEvent(body.replace('delivered','bounced'),headers(),secret,now)));
+test('Stale and future signatures are rejected',()=>{assert.throws(()=>verifyEvent(body,headers(),secret,now+301000));assert.throws(()=>verifyEvent(body,headers(),secret,now-301000));});
+test('Missing headers, invalid signatures and wrong secrets fail closed',()=>{assert.throws(()=>verifyEvent(body,new Headers(),secret,now));for(const sig of ['v2,'+signature,'v1,AA','v1,','garbage']){const h=headers();h.set('svix-signature',sig);assert.throws(()=>verifyEvent(body,h,secret,now));}assert.throws(()=>verifyEvent(body,headers(),'whsec_YmFk',now));});
+test('Multiple rotating signatures accept a valid v1 only',()=>{const h=headers();h.set('svix-signature',`v1,AA v1,${signature}`);assert.equal(verifyEvent(body,h,secret,now).id,id);});

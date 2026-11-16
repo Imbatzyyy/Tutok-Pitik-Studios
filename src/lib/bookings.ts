@@ -119,7 +119,7 @@ export const normalizeBooking = (record: any): NormalizedBooking => {
   const baseSubtotal = serviceRate > 0 && durationHours > 0 ? serviceRate * durationHours : Math.max(totalFromRow - transportationFee, 0);
   const totalAmount = totalFromRow || baseSubtotal + transportationFee;
   const downpaymentAmount = Number(meta.downpaymentAmount ?? meta.downpayment ?? baseSubtotal / 2) || 0;
-  const remainingBalance = Math.max(totalAmount - downpaymentAmount, 0);
+  const remainingBalance = record.paid_amount!==undefined ? Math.max(totalAmount-Number(record.paid_amount)+Number(record.refunded_amount||0),0) : Math.max(totalAmount - downpaymentAmount, 0);
   const fullName = record.full_name || record.fullName || [record.firstName, record.lastName].filter(Boolean).join(' ') || 'Customer';
   const status = (['pending', 'confirmed', 'completed', 'cancelled'].includes(record.status) ? record.status : 'pending') as BookingStatus;
 
@@ -154,16 +154,16 @@ export const normalizeBooking = (record: any): NormalizedBooking => {
     reference: bookingReference(record),
     receiptNumber: meta.receiptNumber || getReceiptNumber(record),
     receiptIssuedAt: meta.completedAt || record.updated_at || record.created_at,
-    driveLink: meta.driveLink || '',
-    photoStatus: meta.photoStatus || (status === 'completed' ? 'editing' : ''),
+    driveLink: record.gallery_status ? (['ready','delivered','revision_requested'].includes(record.gallery_status)?record.gallery_url||'':'') : meta.driveLink||'',
+    photoStatus: record.gallery_status || meta.photoStatus || (status === 'completed' ? 'editing' : ''),
     paymentMethod: meta.paymentMethod || 'GCash',
     paymentReference: meta.paymentReference || '',
     paymentReceiptUrl: meta.paymentReceiptUrl || '',
     paymentReceiptPath: meta.paymentReceiptPath || '',
     paymentReceiptName: meta.paymentReceiptName || '',
-    paymentStatus: (['submitted', 'verified', 'rejected'].includes(meta.paymentStatus) ? meta.paymentStatus : 'submitted') as PaymentStatus,
+    paymentStatus: record.payment_state ? (['paid','deposit_verified','partially_paid'].includes(record.payment_state)?'verified':record.payment_state==='rejected'?'rejected':'submitted') : (['submitted', 'verified', 'rejected'].includes(meta.paymentStatus) ? meta.paymentStatus : 'submitted') as PaymentStatus,
     paymentSubmittedAt: meta.paymentSubmittedAt || record.created_at,
-    adminNote: meta.adminNote || '',
+    adminNote: record.client_note ?? meta.adminNote ?? '',
   };
 };
 

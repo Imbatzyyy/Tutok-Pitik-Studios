@@ -11,7 +11,7 @@ const emailModule = {};
 vm.runInNewContext(ts.transpileModule(readFileSync(new URL('../supabase/functions/_shared/email.ts', import.meta.url), 'utf8'), {compilerOptions:{module:ts.ModuleKind.CommonJS,target:ts.ScriptTarget.ES2022}}).outputText, {exports:emailModule});
 const portalModule={};
 vm.runInNewContext(ts.transpileModule(readFileSync(new URL('../supabase/functions/_shared/admin-session.ts',import.meta.url),'utf8'),{compilerOptions:{module:ts.ModuleKind.CommonJS,target:ts.ScriptTarget.ES2022}}).outputText,{exports:portalModule,atob});
-const token='fixture.'+Buffer.from(JSON.stringify({sub:'actor',session_id:'11111111-1111-4111-8111-111111111111'})).toString('base64url')+'.signature';
+const token='fixture.'+Buffer.from(JSON.stringify({aal:'aal2',sub:'actor',session_id:'11111111-1111-4111-8111-111111111111'})).toString('base64url')+'.signature';
 const source = readFileSync(new URL('../supabase/functions/make-server-032fda65/index.ts', import.meta.url), 'utf8');
 const compiled = ts.transpileModule(source, {
   compilerOptions: { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2022, esModuleInterop: true },
@@ -19,7 +19,7 @@ const compiled = ts.transpileModule(source, {
 });
 assert.equal(compiled.diagnostics?.length, 0, 'Edge module must transpile');
 const routes = [
-  ['POST', '/users', { email: 'fixture@example.invalid', password: 'offline-fixture', fullName: 'Fixture' }],
+  ['POST', '/users', { email: 'fixture@example.invalid', role:'staff', fullName: 'Fixture' }],
   ['GET', '/users/all'],
   ['PUT', '/users/target', { fullName: 'Updated fixture', role: 'customer' }],
   ['DELETE', '/users/target'],
@@ -35,7 +35,7 @@ function harness({ role = 'superadmin', status = 'active', missing = false, look
         return { data: { user: invalid ? null : { id: 'actor' } }, error: invalid ? { message: 'invalid' } : null };
       },
       admin: {
-        createUser: async () => { events.push('auth.create'); return { data: { user: { id: 'target' } }, error: null }; },
+        inviteUserByEmail: async (email,options) => { events.push('auth.create'); return { data: { user: { id: 'target' } }, error: null }; },
         updateUserById: async () => { events.push('auth.update'); return { error: null }; },
         deleteUser: async () => { events.push('auth.delete'); return { error: null }; },
       },
@@ -99,11 +99,12 @@ for (const [method, path, body] of routes) {
       h.profile.status = status;
       const active = (status ?? 'active') === 'active';
       const allowed = active && ['superadmin', 'super_admin'].includes(role);
-      const expected = !active ? 401 : allowed ? 200 : 403;
+      const retired=method==='DELETE';
+      const expected = !active ? 401 : retired ? 410 : allowed ? 200 : 403;
       const response = await h.request(method, path, body);
       assert.equal(response.status, expected, `${method} ${path}: ${role}/${status}`);
       const payload = await response.json();
-      if (allowed) {
+      if (allowed&&!retired) {
         assert.equal(payload.success, true);
         const effect = { POST: 'auth.create', GET: 'db.list', PUT: 'auth.update', DELETE: 'auth.delete' }[method];
         assert.ok(h.events.includes(effect), `Allowed ${method} must execute operation`);
@@ -128,7 +129,7 @@ for (const [method, path, body] of routes) {
 }
 for (const role of ['superadmin', 'super_admin']) {
   const h = harness({ role });
-  assert.equal((await h.request('DELETE', '/users/actor')).status, 400);
+  assert.equal((await h.request('DELETE', '/users/actor')).status, 410);
   assert.deepEqual(h.events, ['auth.lookup', 'profile.lookup']);
   cases++;
 }
@@ -160,7 +161,10 @@ for(const updates of [{role:'customer'},{status:'inactive'},{role:'owner'},{stat
 for(const method of ['POST','PUT','DELETE']){
  const h=harness({role:'staff'});assert.equal((await h.request(method,method==='POST'?'/portfolio':'/portfolio/target',{})).status,403);cases++;
 }
-for(const badToken of ['', 'malformed', 'x.'+Buffer.from(JSON.stringify({sub:'other',session_id:'11111111-1111-4111-8111-111111111111'})).toString('base64url')+'.s']) {
+for(const badToken of ['', 'malformed', 'x.'+Buffer.from(JSON.stringify({aal:'aal1',sub:'actor',session_id:'11111111-1111-4111-8111-111111111111'})).toString('base64url')+'.s', 'x.'+Buffer.from(JSON.stringify({sub:'other',session_id:'11111111-1111-4111-8111-111111111111'})).toString('base64url')+'.s']) {
  assert.equal(await portalModule.hasPortalSession({rpc:()=>{throw new Error('Must not query');}},badToken,'actor'),false);cases++;
 }
 console.log(`PASS: ${cases} total edge authorization cases including portal binding, revocation errors, staff content restrictions and self-lockout.`);
+
+for(const [method,path] of [['POST','/bookings'],['PUT','/bookings/target'],['DELETE','/bookings/target'],['GET','/bookings/all']]){const h=harness();assert.equal((await h.request(method,path,method==='GET'?undefined:{})).status,410);assert.deepEqual(h.events,['auth.lookup','profile.lookup']);}
+console.log('Legacy booking mutations are retired; no service-role bypass can skip the validated RPCs.');

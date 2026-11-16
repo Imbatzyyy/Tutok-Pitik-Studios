@@ -5,6 +5,7 @@
   "type": "module",
   "dependencies": {
     "@jsr/supabase__supabase-js": "2.110.7",
+    "@netlify/blobs": "^11.1.9",
     "@netlify/functions": "5.3.0",
     "@radix-ui/react-accordion": "^1.2.3",
     "@radix-ui/react-alert-dialog": "^1.1.6",
@@ -60,6 +61,7 @@
     "vite": "6.4.5"
   },
   "devDependencies": {
+    "@electric-sql/pglite": "^0.5.16",
     "@tailwindcss/vite": "4.1.12",
     "@types/node": "^20.10.0",
     "@types/react": "^18.3.12",
@@ -78,6 +80,7 @@
     "email:templates": "node scripts/generate-email-templates.mjs",
     "test:google-auth": "node scripts/test-google-auth.mjs",
     "test:database-health": "node --test scripts/test-database-health.mjs",
-    "test:admin-login": "node --test scripts/test-admin-login.mjs"
+    "test:admin-login": "node --test scripts/test-admin-login.mjs",
+    "test:studio-operations": "node --test scripts/test-studio-events.mjs scripts/test-studio-backup.mjs"
   }
 }

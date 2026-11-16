@@ -15,7 +15,7 @@ interface DemoDb {
   tables: Record<string, Row[]>;
 }
 
-const STORAGE_KEY = 'tps-demo-db-v1';
+const STORAGE_KEY = 'tps-demo-db-v2';
 const day = (offset: number) => {
   const date = new Date();
   date.setDate(date.getDate() + offset);
@@ -64,7 +64,7 @@ const seed = (): DemoDb => {
       transportation_fee: extra.transportation_fee || 0,
       total_price: subtotal + (extra.transportation_fee || 0),
       location: extra.location || 'Tomas Morato Ave, Quezon City',
-      status,
+      status,version:1,archived_at:null,assigned_to:status==='confirmed'?'u-staff':null,editor_id:'u-admin',support_ids:[],delivery_due:status==='completed'?day(-2):day(offset+14),checklist:{contact:true},preparation:{style:'Natural light and candid moments',venue_contact:'Demo venue coordinator'},needs_information:false,paid_amount:status==='pending'?0:subtotal/2,refunded_amount:0,payment_state:status==='pending'?'under_review':'deposit_verified',gallery_status:status==='completed'?'editing':'not_started',gallery_url:'',client_note:'',
       message: `${extra.note || ''}${meta({
         paymentMethod: 'GCash',
         paymentReference: `90${id.replace(/\D/g, '').padEnd(8, '7')}`,
@@ -180,6 +180,11 @@ const RESERVED = new Set(['select', 'order', 'limit', 'offset', 'on_conflict', '
 
 export function createDemoFetch(supabaseUrl: string): typeof fetch {
   const db = load();
+  db.tables.studio_settings=[{id:true,opens_at:'08:00',closes_at:'20:00',buffer_before:15,buffer_after:15,max_hours:8,lead_days:1,delivery_days:14,review_hours:48}];
+  db.tables.booking_payments ||= db.tables.bookings.map(b=>({id:'p-'+b.id,booking_id:b.id,kind:'deposit',amount:b.price*b.duration/2,method:'GCash',reference:'DEMO-'+b.id,status:b.status==='pending'?'pending':'verified',source:'legacy',reason:'Fictional preview payment',created_at:b.created_at}));
+  db.tables.booking_notes ||= [{id:'note1',booking_id:'b-1001',internal:false,body:'Please confirm the entrance and parking arrangements.',author_name:'Demo studio',author_role:'admin',created_at:iso(-1)}];
+  db.tables.studio_notifications ||= [{id:1,user_id:'u-super',booking_id:'b-1001',title:'A payment proof needs review',created_at:iso(0),read_at:null}];
+  db.tables.studio_operations ||= [{key:'backup',state:'preview',detail:'Fictional local preview. No live backup has run here.',checked_at:iso(0)}];
   const save = () => {
     try {
       sessionStorage.setItem(STORAGE_KEY, JSON.stringify(db));
@@ -290,6 +295,28 @@ export function createDemoFetch(supabaseUrl: string): typeof fetch {
       return json({ msg: `Demo auth route not implemented: ${route}` }, 404);
     }
 
+    if(path.startsWith('/rest/v1/rpc/studio_')){
+      const name=path.split('/').pop(), all=table('bookings');
+      if(name==='studio_calendar')return json(all.filter(b=>b.booking_date>=body.p_from&&b.booking_date<=body.p_to&&b.status!=='cancelled'));
+      if(name==='studio_team_directory')return json(table('users').filter(u=>u.role!=='customer'));
+      if(name==='studio_can_verify_payment')return json(roleOf(currentAccount(headers))!=='staff');
+      if(name==='studio_public_schedule')return json(table('studio_settings')[0]);
+      if(name==='studio_booking_page'||name==='studio_export_bookings'){
+        const f=body?.p_filters||{};let rows=all.filter(b=>(!f.q||JSON.stringify(b).toLowerCase().includes(f.q.toLowerCase()))&&(!f.status||f.status==='all'||b.status===f.status)&&(!f.customer||b.user_id===f.customer)&&(!f.from||b.booking_date>=f.from)&&(!f.to||b.booking_date<=f.to));
+        if(f.view==='payments')rows=rows.filter(b=>b.payment_state==='under_review');if(f.view==='mine')rows=rows.filter(b=>b.assigned_to===currentAccount(headers)?.id||b.editor_id===currentAccount(headers)?.id);
+        return json(name==='studio_export_bookings'?rows:{rows:rows.slice((body?.p_page||0)*(body?.p_size||25),((body?.p_page||0)+1)*(body?.p_size||25)),total:rows.length});
+      }
+      if(name==='studio_overview')return json({pending:2,today:0,unreviewed:2,requests:0,overdue:1,unassigned:2,late_reviews:1,email_issues:0,queue:all.filter(b=>b.status!=='cancelled')});
+      if(name==='studio_clients')return json({total:2,rows:table('users').filter(u=>u.role==='customer').map(u=>({...u,user_id:u.id,bookings:3,last_shoot:day(6)}))});
+      if(name==='studio_finance_report')return json({bookings:6,cancelled:1,booked_value:24350,deposits:12500,final_payments:0,refunds:0,outstanding:11850,repeat_clients:2,avg_review_hours:4,by_service:[{service:'Portrait Photography',bookings:2,booked_value:10000}],monthly:[{month:day(0).slice(0,7),bookings:6}]});
+      if(name==='studio_email_history'||name==='studio_sessions')return json([]);
+      if(name==='studio_update_booking'||name==='studio_save_preparation'){
+        const b=all.find(b=>b.id===(body.p_id||body.p_booking));if(!b)return json({message:'Booking missing'},404);if(b.version!==body.p_version)return json({message:'This booking changed while you were editing.'},400);Object.assign(b,body.p_changes||{preparation:body.p_details});b.version++;save();return json(b);
+      }
+      if(name==='studio_add_note'){const n={id:uuid(),booking_id:body.p_booking,body:body.p_body,internal:body.p_internal,author_name:'Demo team',created_at:iso(0)};table('booking_notes').push(n);save();return json(n);}
+      if(name==='studio_mark_read'){table('studio_notifications').forEach(n=>n.read_at=iso(0));save();return json(null);}
+      return json({message:'This action is available on the connected studio; the local preview does not change real records.'},400);
+    }
     // ---------------- RPC ----------------
     if (path === '/rest/v1/rpc/get_booked_slots') {
       const start = body?.start_date || '0000-01-01';

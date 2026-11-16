@@ -1,3 +1,4 @@
+import '../../styles/studio-operations.css';
 import { lazy, Suspense, useCallback, useEffect, useRef, useState, type FormEvent } from 'react';
 import { ArrowLeft, ArrowUpRight, Camera, Eye, EyeOff, LoaderCircle, LockKeyhole, Mail, ShieldCheck } from 'lucide-react';
 import { Toaster } from 'sonner';
@@ -7,11 +8,13 @@ import { parseRoute } from '../../lib/routes';
 import { DEFAULT_PORTFOLIO } from '../../content/portfolio';
 import logo from '../../assets/logo-160.png';
 const Dashboard = lazy(() => import('./AdminDashboard'));
+import StudioMfa from './StudioMfa';
 const LOGIN = '/admin/login';
 const safeNext = (value: string | null) => value?.startsWith('/admin/') && !/[?\\#]/.test(value) && parseRoute(value)?.view === 'admin' ? value : '/admin/overview';
 
 export default function AdminPortal() {
   const [user,setUser]=useState<SessionUser|null>(null);
+  const [needsMfa,setNeedsMfa]=useState(false);
   const [checking,setChecking]=useState(true);
   const [checkError,setCheckError]=useState(false);
   const [email,setEmail]=useState(''); const [password,setPassword]=useState('');
@@ -39,13 +42,13 @@ export default function AdminPortal() {
     try {
       const {data:{session},error:sessionError}=await supabase.auth.getSession();
       if(sessionError)throw sessionError;
-      if(!session){setUser(null);setCheckError(false);return;}
+      if(!session){setNeedsMfa(false);setUser(null);setCheckError(false);return;}
       const {data:allowed,error:permissionError}=await supabase.rpc('is_studio_team');
       if(permissionError)throw permissionError;
-      if(!allowed){await signOut();setError('Your session has ended. Please sign in again.');return;}
+      if(!allowed){const {data:entry,error:entryError}=await supabase.rpc('studio_mfa_entry');if(entryError)throw entryError;if(entry){setNeedsMfa(true);setUser(null);setCheckError(false);return;}await signOut();setError('Your session has ended. Please sign in again.');return;}
       const profile=await resolveSessionUser(session.user);
       if(!isTeamRole(profile.role)){await signOut();return;}
-      setUser(profile);setCheckError(false);
+      setNeedsMfa(false);setUser(profile);setCheckError(false);
     }catch{setCheckError(true);setUser(null);}
     finally{checkRunning.current=false;setChecking(false);}
   },[signOut]);
@@ -87,6 +90,7 @@ export default function AdminPortal() {
   };
   if(checking)return <main className="admin-loading" role="status"><LoaderCircle className="spin"/> Opening your studio workspace…</main>;
   if(checkError)return <main className="admin-loading"><ShieldCheck/><h1>We couldn’t verify your session</h1><p>Check your connection and try again.</p><button className="btn btn-primary" onClick={()=>void check()}>Try again</button><a href={LOGIN} onClick={()=>void supabase.auth.signOut({scope:'local'})}>Return to sign in</a></main>;
+  if(needsMfa)return <StudioMfa onVerified={()=>void check()} onExit={()=>{setNeedsMfa(false);void signOut();}}/>;
   if(user)return <div className="admin-portal">{isDemoMode&&<div className="demo-banner">Local preview · fictional studio data</div>}<Suspense fallback={<main className="admin-loading">Loading workspace…</main>}><Dashboard key={`${user.role}-${routeRevision}`} user={user} initialTab={route?.view==='admin'?route.tab:undefined} initialBookingId={route?.view==='admin'?route.bookingId:undefined} onClose={()=>window.location.assign('/')} onLogout={()=>void signOut()} onLocationChange={(tab,id)=>navigate(id?`/admin/bookings/${encodeURIComponent(id)}`:`/admin/${tab}`,true)}/></Suspense><Toaster theme="light" position="top-right" richColors closeButton/></div>;
   return <main className="studio-login">
     <section className="studio-login-photo" aria-label="Tutok Pitik Studios team workspace">

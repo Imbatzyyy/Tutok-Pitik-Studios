@@ -12,9 +12,12 @@ import type { SessionUser } from '../../lib/session';
 import { supabase } from '../../lib/supabase';
 
 export type AdminRole = SessionUser['role'];
-export type AdminTabId = 'overview' | 'bookings' | 'users' | 'portfolio' | 'availability' | 'reviews' | 'payments' | 'customers' | 'activity' | 'inbox';
+export type AdminTabId = 'overview' | 'bookings' | 'users' | 'portfolio' | 'availability' | 'reviews' | 'payments' | 'customers' | 'activity' | 'inbox' | 'notifications' | 'reports' | 'security';
 
 export const TAB_ROLES: Record<AdminTabId, AdminRole[]> = {
+  notifications: ['superadmin','admin','staff'],
+  reports: ['superadmin','admin'],
+  security: ['superadmin','admin','staff'],
   overview: ['superadmin', 'admin', 'staff'],
   payments: ['superadmin', 'admin'],
   customers: ['superadmin', 'admin'],
