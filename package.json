@@ -81,7 +81,7 @@
     "test:google-auth": "node scripts/test-google-auth.mjs",
     "test:database-health": "node --test scripts/test-database-health.mjs",
     "test:admin-login": "node --test scripts/test-admin-login.mjs",
-    "test:studio-operations": "node --test scripts/test-studio-events.mjs scripts/test-studio-backup.mjs",
+    "test:studio-operations": "node --test scripts/test-studio-events.mjs scripts/test-studio-backup.mjs scripts/test-studio-contact.mjs",
     "test:studio-auth-mail": "node --test scripts/test-studio-auth-mail.mjs"
   }
 }

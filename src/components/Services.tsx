@@ -1,5 +1,7 @@
 import { useMemo, useState } from 'react';
 import { ArrowRight, Building2, Cake, Check, Info, Mic, ShoppingBag, UserRound } from 'lucide-react';
+import { askStudio } from './Inquiry';
+import { countStep } from '../lib/client-experience';
 import Picture from './common/Picture';
 import { DOWNPAYMENT_RATE, INCLUDED_IN_EVERY_SESSION, SERVICES, type Service, type ServiceIcon } from '../content/site';
 import type { PortfolioItem } from '../content/portfolio';
@@ -24,7 +26,7 @@ const coverFor = (service: Service, items: PortfolioItem[]) => {
       : service.id === 'event'
         ? pool.filter((item) => item.subCategory !== 'birthday')
         : pool;
-  const list = refined.length ? refined : pool;
+  const list = refined;
   return list.find((item) => item.isFeatured) || list[0] || null;
 };
 
@@ -32,23 +34,24 @@ const shortTitle = (title: string) => title.replace(' Photography', '').replace(
 
 interface ServicesProps {
   items: PortfolioItem[];
+  deliveryDays?:number;
   onBook: (serviceId: string, hours?: number) => void;
 }
 
 /** Services and pricing in one place: pick a shoot by its photo, then compare its packages. */
-export default function Services({ items, onBook }: ServicesProps) {
+export default function Services({ items, onBook, deliveryDays }: ServicesProps) {
   const [serviceId, setServiceId] = useState(SERVICES[0].id);
   const service = SERVICES.find((entry) => entry.id === serviceId) || SERVICES[0];
   const covers = useMemo(() => Object.fromEntries(SERVICES.map((entry) => [entry.id, coverFor(entry, items)])), [items]);
   const ServiceIconLarge = SERVICE_ICONS[service.icon];
 
   const showExamples = () => {
-    window.dispatchEvent(new CustomEvent(PORTFOLIO_FILTER_EVENT, { detail: service.portfolioCategory }));
+    window.dispatchEvent(new CustomEvent(PORTFOLIO_FILTER_EVENT, { detail: {category:service.portfolioCategory, subtype:service.id === 'birthday' ? 'birthday' : 'all', excludeBirthdays:service.id === 'event'} }));
     scrollToSection('portfolio');
   };
 
   const select = (id: string, focus = false) => {
-    setServiceId(id);
+    setServiceId(id); countStep('service_view',id);
     if (focus) document.getElementById(`service-tab-${id}`)?.focus();
   };
 
@@ -59,7 +62,7 @@ export default function Services({ items, onBook }: ServicesProps) {
           <p className="eyebrow">Services &amp; pricing</p>
           <h2 className="section-title">Pick your shoot</h2>
           <p className="section-lead">
-            Every session is priced per hour, so you only pay for the coverage you need. Reserve with a {Math.round(DOWNPAYMENT_RATE * 100)}% GCash downpayment and pay the rest on shoot day.
+            Every session is priced per hour, so you only pay for the coverage you need. Hold a time before sending the {Math.round(DOWNPAYMENT_RATE * 100)}% GCash deposit. The studio confirms after reviewing your payment.
           </p>
         </header>
 
@@ -108,6 +111,8 @@ export default function Services({ items, onBook }: ServicesProps) {
             <p className="service-ideal">
               <span>Ideal for</span> {service.idealFor}
             </p>
+            <p>{deliveryDays ? 'Gallery delivery target: '+deliveryDays+' days after the shoot. ' : ''}Ask for your edited-photo count and venue travel quote before paying.</p>
+            <button type="button" className="btn-link" onClick={()=>askStudio(service.id)}>Ask the studio</button> · <a href={'/services/'+service.id+'/'}>View service details</a>
             <ul className="check-list">
               {INCLUDED_IN_EVERY_SESSION.map((line) => (
                 <li key={line}>
@@ -115,8 +120,8 @@ export default function Services({ items, onBook }: ServicesProps) {
                 </li>
               ))}
             </ul>
-            <button type="button" className="btn-link" onClick={showExamples}>
-              See {shortTitle(service.title).toLowerCase()} examples <ArrowRight size={16} aria-hidden="true" />
+            <button type="button" className="btn-link" onClick={covers[service.id] ? showExamples : () => askStudio(service.id)}>
+              {covers[service.id] ? 'See '+shortTitle(service.title).toLowerCase()+' examples' : 'Ask for a sample or quote'} <ArrowRight size={16} aria-hidden="true" />
             </button>
           </div>
 
@@ -132,10 +137,10 @@ export default function Services({ items, onBook }: ServicesProps) {
                   </div>
                   <p className="package-price">
                     <strong>{formatPeso(total)}</strong>
-                    <span className="package-down">{formatPeso(total * DOWNPAYMENT_RATE)} to reserve</span>
+                    <span className="package-down">{formatPeso(total * DOWNPAYMENT_RATE)} deposit</span>
                   </p>
                   <p className="package-note">{pack.note}</p>
-                  <button type="button" className={`btn ${pack.recommended ? 'btn-primary' : 'btn-outline'} btn-block`} onClick={() => onBook(service.id, pack.hours)}>
+                  <button type="button" className={`btn ${pack.recommended ? 'btn-primary' : 'btn-outline'} btn-block`} onClick={() => {countStep('package',service.id);onBook(service.id, pack.hours);}}>
                     Book {pack.name}
                   </button>
                 </article>
@@ -147,7 +152,7 @@ export default function Services({ items, onBook }: ServicesProps) {
         <div className="pricing-footnote">
           <Info size={18} aria-hidden="true" />
           <p>
-            Need a different length? Any number of hours works at {formatPeso(service.rate)}/hour. A transportation fee based on your venue is added after we review your booking, and you will see it in your account before the shoot.
+            Need a different length? Choose an available duration at {formatPeso(service.rate)}/hour. A transportation fee based on your venue is added after we review your booking, and you will see it in your account before the shoot.
           </p>
         </div>
       </div>

@@ -7,7 +7,7 @@ export function scrollToSection(sectionId: string) {
   }
 
   element.scrollIntoView({
-    behavior: 'smooth',
+    behavior: window.matchMedia('(prefers-reduced-motion: reduce)').matches ? 'instant' : 'smooth',
     block: 'start'
   });
 

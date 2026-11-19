@@ -8,7 +8,7 @@ const MAX_AGE = 10 * 60 * 1000;
 // The dashboard is deliberately not a return path: team members land on home after Google.
 const RETURN_PATHS = ['/', '/#contact', '/account'] as const;
 type ReturnPath = (typeof RETURN_PATHS)[number];
-type Attempt = { startedAt: number; returnTo: ReturnPath };
+type Attempt = { startedAt: number; returnTo: ReturnPath; bookingId?: string };
 
 /** Where to land after Google: the booking form, the customer account, or home. */
 const returnPathFor = (booking: boolean): ReturnPath => {
@@ -22,6 +22,7 @@ export function prepareGoogleSignIn(remember: boolean, booking: boolean) {
   setRememberMePreference(remember);
   sessionStorage.setItem(ATTEMPT_KEY, JSON.stringify({
     startedAt: Date.now(), returnTo: returnPathFor(booking),
+    bookingId: new URLSearchParams(window.location.search).get("booking") || undefined,
   } satisfies Attempt));
   window.location.assign(GOOGLE_START_PATH);
 }
@@ -72,5 +73,5 @@ export async function finishGoogleSignIn() {
     throw new Error('This sign-in link could not be verified. Please start Google sign-in again in this browser.');
   }
   await resolveCustomerSession(data.user);
-  return attempt.returnTo;
+  return attempt.returnTo === '/account' && /^[a-f0-9-]{36}$/i.test(attempt.bookingId || '') ? '/account/bookings?booking='+attempt.bookingId : attempt.returnTo;
 }

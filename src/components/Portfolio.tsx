@@ -13,6 +13,7 @@ export const PORTFOLIO_FILTER_EVENT = 'tps:portfolio-filter';
 
 export default function Portfolio({ items, onOpen }: PortfolioProps) {
   const [category, setCategory] = useState('all');
+  const [excludeBirthdays,setExcludeBirthdays]=useState(false);
   const [subCategory, setSubCategory] = useState('all');
   const [visibleCount, setVisibleCount] = useState(PAGE_SIZE);
 
@@ -33,12 +34,12 @@ export default function Portfolio({ items, onOpen }: PortfolioProps) {
 
   const filtered = useMemo(() => {
     const matches = items.filter(
-      (item) => (category === 'all' || item.category === category) && (subCategory === 'all' || item.subCategory === subCategory)
+      (item) => (!excludeBirthdays || item.subCategory !== 'birthday') && (category === 'all' || item.category === category) && (subCategory === 'all' || item.subCategory === subCategory)
     );
     // In the "All" view, photos the studio marked as featured lead the grid.
     if (category !== 'all') return matches;
     return [...matches.filter((item) => item.isFeatured), ...matches.filter((item) => !item.isFeatured)];
-  }, [items, category, subCategory]);
+  }, [items, category, subCategory, excludeBirthdays]);
 
   useEffect(() => {
     setVisibleCount(PAGE_SIZE);
@@ -47,9 +48,11 @@ export default function Portfolio({ items, onOpen }: PortfolioProps) {
   // Other sections (e.g. Services → "See examples") can ask for a filter.
   useEffect(() => {
     const handler = (event: Event) => {
-      const value = (event as CustomEvent<string>).detail;
+      const filter = (event as CustomEvent<{category:string;subtype:string;excludeBirthdays:boolean}>).detail;
+      const value=filter.category;
+      setExcludeBirthdays(filter.excludeBirthdays);
       setCategory(categories.some((entry) => entry.value === value) ? value : 'all');
-      setSubCategory('all');
+      setSubCategory(filter.subtype);
     };
     window.addEventListener(PORTFOLIO_FILTER_EVENT, handler);
     return () => window.removeEventListener(PORTFOLIO_FILTER_EVENT, handler);
@@ -68,7 +71,7 @@ export default function Portfolio({ items, onOpen }: PortfolioProps) {
 
         {categories.length > 1 && (
           <div className="chip-row" role="group" aria-label="Filter by category">
-            <button type="button" className={`chip ${category === 'all' ? 'is-active' : ''}`} aria-pressed={category === 'all'} onClick={() => { setCategory('all'); setSubCategory('all'); }}>
+            <button type="button" className={`chip ${category === 'all' ? 'is-active' : ''}`} aria-pressed={category === 'all'} onClick={() => { setExcludeBirthdays(false); setCategory('all'); setSubCategory('all'); }}>
               All <span className="chip-count">{items.length}</span>
             </button>
             {categories.map((entry) => (
@@ -78,7 +81,7 @@ export default function Portfolio({ items, onOpen }: PortfolioProps) {
                 className={`chip ${category === entry.value ? 'is-active' : ''}`}
                 aria-pressed={category === entry.value}
                 onClick={() => {
-                  setCategory(entry.value);
+                  setExcludeBirthdays(false); setCategory(entry.value);
                   setSubCategory('all');
                 }}
               >
@@ -90,8 +93,8 @@ export default function Portfolio({ items, onOpen }: PortfolioProps) {
 
         {subCategories.length > 1 && (
           <div className="chip-row chip-row-sub" role="group" aria-label="Filter by type">
-            <button type="button" className={`chip chip-sm ${subCategory === 'all' ? 'is-active' : ''}`} aria-pressed={subCategory === 'all'} onClick={() => setSubCategory('all')}>
-              All {categoryLabel(category)}
+            <button type="button" className={`chip chip-sm ${subCategory === 'all' ? 'is-active' : ''}`} aria-pressed={subCategory === 'all'} onClick={() => {setExcludeBirthdays(false);setSubCategory('all');}}>
+              {excludeBirthdays ? 'Event coverage' : 'All '+categoryLabel(category)}
             </button>
             {subCategories.map((entry) => (
               <button
@@ -99,7 +102,7 @@ export default function Portfolio({ items, onOpen }: PortfolioProps) {
                 type="button"
                 className={`chip chip-sm ${subCategory === entry.value ? 'is-active' : ''}`}
                 aria-pressed={subCategory === entry.value}
-                onClick={() => setSubCategory(entry.value)}
+                onClick={() => {setExcludeBirthdays(false);setSubCategory(entry.value);}}
               >
                 {entry.label}
               </button>

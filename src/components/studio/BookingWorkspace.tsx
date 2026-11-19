@@ -200,6 +200,7 @@ export default function BookingWorkspace({
   const legacyProof = String(parseBookingMessage(b.message).meta?.paymentReceiptUrl || '');
   const hasLegacyProof = /^data:image\/(jpeg|png|webp);base64,/i.test(legacyProof);
   const outstanding = Math.max(0, b.total_price - b.paid_amount + b.refunded_amount);
+  const pendingDeposits = data.payments.filter(p=>p.status==='pending' && p.kind==='deposit').reduce((n,p)=>n+Number(p.amount),0);
   const pendingRequests = data.requests.filter((r) => r.status === 'pending').length;
   const pendingPayments = data.payments.filter((p) => p.status === 'pending').length;
   const steps = team ? nextSteps(b) : [];
@@ -310,8 +311,8 @@ export default function BookingWorkspace({
           <StatusBadge tone={galleryTone(b.gallery_status)}>{galleryText(b.gallery_status)}</StatusBadge>
         </div>
         <div>
-          <small>Still to pay</small>
-          <strong>{money(outstanding)}</strong>
+          <small>{pendingDeposits ? 'Balance if deposit is verified' : 'Remaining balance'}</small>
+          <strong>{b.status === 'cancelled' ? 'Cancelled' : money(Math.max(0,outstanding-pendingDeposits))}</strong>
         </div>
       </div>
 

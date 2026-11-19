@@ -1,8 +1,7 @@
 import { useCallback, useEffect, useState } from 'react';
 import { supabase } from './supabase';
-import { isMissingRelation } from './api';
 import { toDateKey } from './format';
-import { BOOKING_WINDOW_MONTHS, FIRST_START_HOUR, LAST_END_HOUR, MAX_SESSION_HOURS, MIN_LEAD_DAYS } from '../content/site';
+import { BOOKING_WINDOW_MONTHS } from '../content/site';
 
 export interface BookedSlot {
   date: string;
@@ -10,7 +9,7 @@ export interface BookedSlot {
   end: number;
 }
 
-export interface ScheduleRules {opens_at:string;closes_at:string;max_hours:number;lead_days:number;}
+export interface ScheduleRules {opens_at:string;closes_at:string;max_hours:number;lead_days:number; delivery_days?:number; review_hours?:number;}
 const DEFAULT_RULES:ScheduleRules={opens_at:'08:00',closes_at:'20:00',max_hours:8,lead_days:1};
 let currentRules=DEFAULT_RULES;
 export interface AvailabilityState {
@@ -56,17 +55,18 @@ export function useAvailability(enabled = true): AvailabilityState {
 
     (async () => {
       const schedule=await supabase.rpc('studio_public_schedule');
+      if(cancelled)return;
       if(schedule.data)currentRules=schedule.data;
       const blocked: Record<string, string> = {};
       const slots: Record<string, BookedSlot[]> = {};
       let hasSlots = false;
-      let failures = 0;
+      let failures = schedule.error || !schedule.data ? 1 : 0;
 
       try {
         // Public RPC returns dates only; the reason column stays team-only.
         const { data, error } = await supabase.rpc('get_blocked_dates', { start_date: start, end_date: end });
         if (error) {
-          if (!isMissingRelation(error)) failures += 1;
+          failures += 1;
         } else {
           (data || []).forEach((row: any) => {
             blocked[String(row.blocked_date).slice(0, 10)] = 'Unavailable';
@@ -79,7 +79,7 @@ export function useAvailability(enabled = true): AvailabilityState {
       try {
         const { data, error } = await supabase.rpc('get_booked_slots', { start_date: start, end_date: end });
         if (error) {
-          if (!isMissingRelation(error)) failures += 1;
+          failures += 1;
         } else {
           hasSlots = true;
           (data || []).forEach((row: any) => {
@@ -92,7 +92,7 @@ export function useAvailability(enabled = true): AvailabilityState {
       }
 
       if (!cancelled) setState({ rules:currentRules,status: failures > 0 ? 'error' : 'ready', hasSlots, blocked, slots });
-    })();
+    })().catch(() => { if (!cancelled) setState(prev => ({...prev,status: 'error',hasSlots:false})); });
 
     return () => {
       cancelled = true;
@@ -136,7 +136,7 @@ export const dayState = (dateKey: string, availability: Pick<AvailabilityState, 
   if (availability.blocked[dateKey]) return 'blocked';
   const free = freeStartHours(availability.slots[dateKey]);
   if (free.length === 0) return 'full';
-  if (free.length < LAST_END_HOUR - FIRST_START_HOUR) return 'limited';
+  if (free.length < freeStartHours([]).length) return 'limited';
   return 'open';
 };
 

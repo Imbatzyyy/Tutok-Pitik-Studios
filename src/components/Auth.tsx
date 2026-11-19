@@ -221,7 +221,7 @@ export default function Auth({ isOpen, defaultView = 'signin', onClose, onSucces
   const headingId = useId();
   const photoKey: PhotoKey = stage === 'signup' || stage === 'signup-done' ? 'signup' : 'signin';
   const description = bookingIntent && (stage === 'signin' || stage === 'signup')
-    ? 'Your booking details are saved. Sign in or create a free account to pay the downpayment and lock in your date.'
+    ? 'Your booking details are saved. Sign in or create a free account to hold an available time and submit your downpayment.'
     : heading.description;
   const rememberToggle = (
     <label className="checkbox auth-remember">

@@ -31,7 +31,7 @@ import ConfirmDialog from '../common/ConfirmDialog';
 import ActivityView from './operations/ActivityView';
 import BookingsView from './operations/BookingsView';
 import ClientsView from './operations/ClientsView';
-import InboxView, { inboxSeenAt } from './operations/InboxView';
+import InboxView from './operations/InboxView';
 import NotificationsView from './operations/NotificationsView';
 import OverviewView, { type BookingPreset } from './operations/OverviewView';
 import ReportsView from './operations/ReportsView';
@@ -143,9 +143,9 @@ export default function AdminDashboard({ user, onClose, onPortfolioUpdated, onLo
       }),
     ];
     if (canAccess(user.role, 'inbox')) {
-      const since = inboxSeenAt() || new Date(Date.now() - 7 * 864e5).toISOString();
+
       jobs.push(
-        Promise.resolve(supabase.from('contact_messages').select('id').gt('created_at', since).limit(100)).then(({ data, error }) => {
+        Promise.resolve(supabase.from('contact_messages').select('id').eq('inquiry_state','new').limit(100)).then(({ data, error }) => {
           if (!error) next.inbox = data?.length || 0;
         })
       );
@@ -158,7 +158,7 @@ export default function AdminDashboard({ user, onClose, onPortfolioUpdated, onLo
     void loadCounts();
   }, [loadCounts, revision]);
 
-  const onInboxSeen = useCallback(() => setCounts((c) => ({ ...c, inbox: 0 })), []);
+  const onInboxSeen = useCallback(() => void loadCounts(), [loadCounts]);
   const onNotificationsRead = useCallback(() => void loadCounts(), [loadCounts]);
 
   const go = async (id: AdminTabId) => {

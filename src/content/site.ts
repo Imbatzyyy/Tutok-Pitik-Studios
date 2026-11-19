@@ -141,7 +141,7 @@ export const findService = (value?: string | null) => {
 
 export const BOOKING_STEPS = [
   { title: 'Pick a service & date', text: 'Choose your session, see the price instantly and check which dates are still open.' },
-  { title: 'Secure your slot', text: 'Pay the 50% downpayment through GCash and upload your receipt. That reserves your date.' },
+  { title: 'Secure your slot', text: 'Sign in to hold an available time for 15 minutes. Send the 50% GCash deposit during the hold, then submit your reference and receipt.' },
   { title: 'We confirm & shoot', text: 'We review your booking, confirm by email and show up ready on the day.' },
   { title: 'Receive your photos', text: 'Your edited photos arrive in a private Google Drive folder linked in your account.' },
 ];
@@ -149,7 +149,7 @@ export const BOOKING_STEPS = [
 export const FAQS = [
   {
     q: 'How do I book a session?',
-    a: 'Pick a service, date and time in the booking form, pay the 50% downpayment through GCash and upload your receipt. We review it and confirm by email. You can follow every update in Profile → Bookings.',
+    a: 'Pick a service, date and time in the booking form, sign in, hold your time, pay the 50% downpayment through GCash and upload your receipt. We review it and confirm by email. You can follow every update in Profile → Bookings.',
   },
   {
     q: 'How much is the downpayment?',
@@ -165,7 +165,7 @@ export const FAQS = [
   },
   {
     q: 'Can I reschedule?',
-    a: 'Message us on Messenger, call or email with your booking reference as early as possible and we will help you find a new date.',
+    a: 'Open your account, select Manage booking, then request a reschedule. Your original schedule stays in place until the studio approves the change.',
   },
   {
     q: 'Why do I need an account to book?',

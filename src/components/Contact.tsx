@@ -1,16 +1,19 @@
-import { useEffect, useMemo, useRef, useState, type FormEvent } from 'react';
+import { useBookingHold, uploadHoldReceipt, type SlotHold } from '../lib/booking-hold';
+import { useCallback, useEffect, useMemo, useRef, useState, type FormEvent } from 'react';
 import { ArrowRight, CalendarCheck, Check, Copy, Download, ImageUp, Info, LoaderCircle, Lock, Mail, MapPin, MessageCircle, Phone, ShieldCheck, Trash2 } from 'lucide-react';
 import { toast } from 'sonner';
+import Inquiry from './Inquiry';
+import { countStep, visitContext } from '../lib/client-experience';
 import BookingCalendar from './BookingCalendar';
 import ConfirmDialog from './common/ConfirmDialog';
 import PrivacyHighlight from './PrivacyHighlight';
 import { SERVICE_ICONS } from './Services';
-import { DOWNPAYMENT_RATE, MAX_ACTIVE_BOOKINGS, SERVICES, STUDIO, findService } from '../content/site';
-import { freeEndHours, freeStartHours, hourToTime, isRangeFree, timeToHour, type AvailabilityState } from '../lib/availability';
-import { ACTIVE_STATUSES, bookingReference, buildBookingMessage } from '../lib/bookings';
+import { DOWNPAYMENT_RATE, SERVICES, STUDIO, findService } from '../content/site';
+import { dayState, freeEndHours, freeStartHours, hourToTime, timeToHour, type AvailabilityState } from '../lib/availability';
+import { normalizeBooking, buildBookingMessage } from '../lib/bookings';
 import { formatDateLong, formatPeso, formatPesoExact, formatTime, hoursLabel } from '../lib/format';
-import { compressImage, randomId, RECEIPTS_BUCKET, uploadToBucket } from '../lib/images';
-import { errorMessage, isMissingRelation, notify } from '../lib/api';
+import { compressImage } from '../lib/images';
+import { errorMessage, notify } from '../lib/api';
 import { supabase } from '../lib/supabase';
 import { useInView } from '../hooks/useInView';
 import { markBookingResume, takeBookingResume } from '../lib/booking-resume';
@@ -40,6 +43,7 @@ export interface BookingSuccess {
 interface ContactProps {
   user: any;
   availability: AvailabilityState;
+  onPrefillUsed: () => void;
   prefill?: BookingPrefill | null;
   onSuccess: (booking: BookingSuccess) => void;
   onRequireAuth: (view: 'signin' | 'signup') => void;
@@ -63,9 +67,9 @@ const QR_FILENAME = 'TutokPitikStudios-GCash-QR.jpg';
 const isTouchDevice = () => typeof window !== 'undefined' && window.matchMedia?.('(pointer: coarse)').matches;
 const EMPTY_DRAFT: Draft = { serviceId: '', date: null, start: null, hours: null, location: '', notes: '', phone: '' };
 
-const loadDraft = (): Draft => {
+const loadDraft = (owner: string): Draft => {
   try {
-    const raw = sessionStorage.getItem(DRAFT_KEY);
+    const raw = sessionStorage.getItem(DRAFT_KEY + ':' + owner) || sessionStorage.getItem(DRAFT_KEY + ':guest');
     return raw ? { ...EMPTY_DRAFT, ...JSON.parse(raw) } : EMPTY_DRAFT;
   } catch {
     return EMPTY_DRAFT;
@@ -74,8 +78,8 @@ const loadDraft = (): Draft => {
 
 const phoneLooksValid = (value: string) => value.replace(/\D/g, '').length >= 10;
 
-export default function Contact({ user, availability, prefill, onSuccess, onRequireAuth, onUserUpdated }: ContactProps) {
-  const [draft, setDraft] = useState<Draft>(loadDraft);
+export default function Contact({ user, availability, prefill, onPrefillUsed, onSuccess, onRequireAuth, onUserUpdated }: ContactProps) {
+  const [draft, setDraft] = useState<Draft>(() => loadDraft(user.id));
   const [reference, setReference] = useState('');
   const [receipt, setReceipt] = useState<{ blob: Blob; dataUrl: string; name: string } | null>(null);
   const [receiptBusy, setReceiptBusy] = useState(false);
@@ -100,6 +104,35 @@ export default function Contact({ user, availability, prefill, onSuccess, onRequ
   const accountPhone = (user?.phone || '').trim();
   const needsPhone = isCustomer && !accountPhone;
 
+  const resumeHold = useCallback((h: SlotHold) => {
+    setDraft(d => ({...d, serviceId: findService(h.service)?.id || '', date:h.date, start:timeToHour(h.start), hours:timeToHour(h.end)-timeToHour(h.start)}));
+  }, []);
+  const finish = useCallback((row: any) => {
+    const b = normalizeBooking(row);
+    setDraft(EMPTY_DRAFT);
+    setConfirmOpen(false);
+    setReceipt(null);
+    setReference('');
+    onSuccess({reference:b.reference,service:b.service,date:b.date,dateDisplay:b.dateDisplay,startTime:b.startTime.slice(0,5),endTime:b.endTime.slice(0,5),
+      time:b.time,hours:b.durationHours,total:b.totalAmount,downpayment:b.downpaymentAmount,balance:b.totalAmount-b.downpaymentAmount,location:b.location,email:b.email});
+  }, [onSuccess]);
+  const payment = useBookingHold(isCustomer ? user.id : null,resumeHold,finish);
+  const [holdBusy,setHoldBusy] = useState(false);
+  const [holdError,setHoldError] = useState('');
+  const [caseNumber,setCaseNumber] = useState('');
+  useEffect(() => { if (isCustomer) availability.reload(); }, [isCustomer, availability.reload]);
+  useEffect(() => { setCaseNumber(''); }, [payment.hold?.id]);
+  async function reportTransfer() {
+    if (!payment.hold || holdBusy) return;
+    setHoldBusy(true);
+    setHoldError('');
+    try {
+      const {data,error} = await supabase.rpc('studio_report_paid_hold',{p_hold:payment.hold.id,p_reference:reference.trim()});
+      if(error) throw error;
+      setCaseNumber(data);
+    } catch (error) { setHoldError(errorMessage(error)); }
+    finally { setHoldBusy(false); }
+  }
   const service = findService(draft.serviceId);
   const daySlots = draft.date ? availability.slots[draft.date] : undefined;
   const startOptions = useMemo(() => freeStartHours(daySlots), [daySlots]);
@@ -108,7 +141,35 @@ export default function Contact({ user, availability, prefill, onSuccess, onRequ
   const endHour = draft.start !== null && hours ? draft.start + hours : null;
   const total = service && hours ? service.rate * hours : 0;
   const downpayment = total * DOWNPAYMENT_RATE;
-  const ready = Boolean(service && draft.date && draft.start !== null && hours);
+  const slotKnown = availability.status === 'ready' && availability.hasSlots && draft.date && ['open','limited'].includes(dayState(draft.date,availability));
+  const ready = Boolean(slotKnown && service && draft.start !== null && hours);
+  const held = payment.active && payment.hold?.service === service?.title && payment.hold?.date === draft.date && draft.start !== null &&
+    timeToHour(payment.hold?.start) === draft.start && timeToHour(payment.hold?.end) === endHour;
+  const canPay = ready && held && !payment.checking && !payment.problem;
+  async function reserve() {
+    if (!ready || !service || draft.start === null || !hours || !draft.date || holdBusy || payment.checking || payment.problem) return;
+    if (draft.location.trim().length < 8 || (needsPhone && !phoneLooksValid(draft.phone))) {
+      const field = draft.location.trim().length < 8 ? 'location' : 'phone';
+      setErrors({[field]:field === 'location' ? 'Enter the complete venue address.' : 'Enter a valid mobile number.'});
+      goToField(field); return;
+    }
+    setHoldBusy(true); setHoldError('');
+    try {
+      const {data,error} = await supabase.rpc('studio_hold_slot',{p_service:service.title,p_date:draft.date,p_start:hourToTime(draft.start),p_end:hourToTime(draft.start+hours)});
+      if (error) throw error;
+      payment.remember(data); countStep('slot',service.id);
+    } catch (e) { setHoldError(errorMessage(e)); availability.reload(); }
+    finally { setHoldBusy(false); }
+  }
+  async function release() {
+    if (!payment.hold) return;
+    setHoldBusy(true);
+    try {
+      const {error}=await supabase.rpc('studio_release_hold',{p_key:payment.hold.id});
+      if(error)throw error;
+      payment.remember(null); setHoldError(''); setReceipt(null); setReference(''); availability.reload();
+    } catch(e) {setHoldError(errorMessage(e));} finally {setHoldBusy(false);}
+  }
 
   const update = (patch: Partial<Draft>) => {
     setDraft((current) => ({ ...current, ...patch }));
@@ -147,7 +208,7 @@ export default function Contact({ user, availability, prefill, onSuccess, onRequ
               ? { label: 'Add mobile no.', field: 'phone' }
               : isGuest
                 ? { label: 'Continue' }
-                : reference.trim().length < 6
+                : !canPay ? { label: 'Check payment hold', field: 'hold' } : reference.trim().length < 6
                   ? { label: 'Add GCash ref.', field: 'reference' }
                   : !receipt
                     ? { label: 'Upload receipt', field: 'receipt' }
@@ -161,6 +222,7 @@ export default function Contact({ user, availability, prefill, onSuccess, onRequ
   // Back from sign-in (email or Google): continue where the visitor left off.
   useEffect(() => {
     if (!isCustomer || !takeBookingResume()) return;
+    countStep('signup_return',service?.id);
     const timer = window.setTimeout(() => {
       if (ready && payRef.current) {
         payRef.current.scrollIntoView({ behavior: 'smooth', block: 'start' });
@@ -176,7 +238,7 @@ export default function Contact({ user, availability, prefill, onSuccess, onRequ
   // Preload the QR as a file so "Save QR" can open the phone's share sheet
   // (Save Image → Photos) without losing the tap's user activation.
   useEffect(() => {
-    if (!isCustomer || !ready || qrFileRef.current || !isTouchDevice()) return;
+    if (!isCustomer || !canPay || qrFileRef.current || !isTouchDevice()) return;
     let cancelled = false;
     fetch(QR_SRC)
       .then((response) => (response.ok ? response.blob() : Promise.reject()))
@@ -187,7 +249,7 @@ export default function Contact({ user, availability, prefill, onSuccess, onRequ
     return () => {
       cancelled = true;
     };
-  }, [isCustomer, ready]);
+  }, [isCustomer, canPay]);
 
   const saveQr = (event: React.MouseEvent<HTMLAnchorElement>) => {
     const file = qrFileRef.current;
@@ -209,7 +271,9 @@ export default function Contact({ user, availability, prefill, onSuccess, onRequ
 
   useEffect(() => {
     try {
-      sessionStorage.setItem(DRAFT_KEY, JSON.stringify(draft));
+      sessionStorage.setItem(DRAFT_KEY + ':' + user.id, JSON.stringify(draft));
+      sessionStorage.removeItem(DRAFT_KEY);
+      if (isCustomer) sessionStorage.removeItem(DRAFT_KEY + ':guest');
     } catch {
       /* storage blocked: draft only lives in memory */
     }
@@ -217,20 +281,22 @@ export default function Contact({ user, availability, prefill, onSuccess, onRequ
 
   // Service / package buttons elsewhere on the page prefill the form.
   useEffect(() => {
-    if (!prefill) return;
+    if (!prefill || payment.checking || !prefill.nonce) return;
+    onPrefillUsed();
+    if (payment.hold) return;
     setDraft((current) => ({
       ...current,
       serviceId: prefill.serviceId || current.serviceId,
       hours: prefill.hours || current.hours,
     }));
-  }, [prefill]);
+  }, [prefill, payment.checking]);
 
   // If the chosen start time stops being free (fresh availability), clear it.
   useEffect(() => {
-    if (draft.start !== null && draft.date && !startOptions.includes(draft.start)) {
+    if (!payment.checking && !payment.hold && availability.status === 'ready' && draft.start !== null && draft.date && !startOptions.includes(draft.start)) {
       setDraft((current) => ({ ...current, start: null }));
     }
-  }, [startOptions, draft.start, draft.date]);
+  }, [startOptions, draft.start, draft.date, payment.checking, payment.hold, availability.status]);
 
   const handleReceipt = async (file?: File | null) => {
     if (!file) return;
@@ -279,29 +345,19 @@ export default function Contact({ user, availability, prefill, onSuccess, onRequ
       toast.info('Bookings are for customer accounts', { description: 'Studio team accounts can manage bookings from the Admin dashboard.' });
       return;
     }
+    if (isCustomer && !canPay) { if (payment.hold || payment.problem) goToField('hold'); else await reserve(); return; }
     if (!validate()) return;
     if (isGuest) {
       requestAuth('signup');
       return;
     }
 
-    try {
-      const { data, error } = await supabase.from('bookings').select('id, status').eq('user_id', user.id).in('status', ACTIVE_STATUSES);
-      if (!error && (data || []).length >= MAX_ACTIVE_BOOKINGS) {
-        toast.warning('You already have the maximum active bookings', {
-          description: `You can have up to ${MAX_ACTIVE_BOOKINGS} pending or confirmed bookings at a time. Message us if you need more.`,
-        });
-        return;
-      }
-    } catch {
-      /* the database enforces nothing here; allow submit if the check fails */
-    }
     setBookingAgreed(false);
     setConfirmOpen(true);
   };
 
   const submitBooking = async () => {
-    if (!bookingAgreed || submittingRef.current || !service || !draft.date || draft.start === null || !hours || !receipt) return;
+    if (!bookingAgreed || submittingRef.current || !service || !draft.date || draft.start === null || !hours || !receipt || !payment.hold) return;
     submittingRef.current = true;
     setSubmitting(true);
 
@@ -312,17 +368,11 @@ export default function Contact({ user, availability, prefill, onSuccess, onRequ
       const startTime = hourToTime(draft.start);
       const endTime = hourToTime(draft.start + hours);
 
-      // Fresh conflict check, in case someone booked the slot a moment ago.
-      const { data: slots, error: slotError } = await supabase.rpc('get_booked_slots', { start_date: draft.date, end_date: draft.date });
-      if (!slotError && slots) {
-        const taken = (slots as any[]).map((slot) => ({ date: draft.date as string, start: timeToHour(slot.start_time), end: timeToHour(slot.end_time) }));
-        if (!isRangeFree(draft.start, draft.start + hours, taken)) {
-          availability.reload();
-          throw new Error('Sorry, that time was just booked. Please choose another time.');
-        }
-      } else if (slotError && !isMissingRelation(slotError)) {
-        console.warn('Slot check failed:', slotError.message);
-      }
+      const holdId = payment.hold.id;
+      const prior = await supabase.from('bookings').select('*').eq('user_id',session.user.id).eq('client_request_id',holdId).maybeSingle();
+      if (prior.error) throw prior.error;
+      if (prior.data) { payment.remember(null); finish(prior.data); return; }
+      if (Date.parse(payment.hold.expires_at) <= Date.now()) throw new Error('Hold expired. If you paid, contact the studio using your hold reference. Do not pay again.');
 
       let phone = accountPhone;
       if (needsPhone) {
@@ -332,7 +382,7 @@ export default function Contact({ user, availability, prefill, onSuccess, onRequ
         else onUserUpdated({ ...user, phone });
       }
 
-      const receiptPath = await uploadToBucket(RECEIPTS_BUCKET, `${user.id}/${randomId()}.jpg`, receipt.blob);
+      const receiptPath = await uploadHoldReceipt(user.id,holdId,receipt.blob);
       if(!receiptPath)throw new Error('Your receipt could not be uploaded securely. Please retry.');
       const message = buildBookingMessage(draft.notes, {
         paymentMethod: 'GCash',
@@ -346,6 +396,7 @@ export default function Contact({ user, availability, prefill, onSuccess, onRequ
       });
 
       const row = {
+        ...(navigator.doNotTrack==='1' ? {} : visitContext()),
         user_id: session.user.id,
         full_name: user.fullName,
         email: user.email,
@@ -363,45 +414,15 @@ export default function Contact({ user, availability, prefill, onSuccess, onRequ
         status: 'pending',
       };
 
-      const keyName=`tps-booking-submit:${user.id}`;
-      const fingerprint=JSON.stringify([row.booking_date,row.start_time,row.end_time,row.service,row.location,reference.trim()]);
-      let request: {key:string;fingerprint:string};try{request=JSON.parse(sessionStorage.getItem(keyName)||'null');}catch{request=null as any;}
-      if(!request||request.fingerprint!==fingerprint){request={key:crypto.randomUUID(),fingerprint};sessionStorage.setItem(keyName,JSON.stringify(request));}
-      const { data: booking, error } = await supabase.rpc('studio_create_booking',{p_payload:row,p_key:request.key});
-      if (error || !booking) throw new Error(error?.message || 'We could not save your booking.');
-
-      sessionStorage.removeItem(keyName);
+      const { data: booking, error } = await supabase.rpc('studio_submit_held_booking',{p_payload:row,p_key:holdId});
+      if (error || !booking) throw new Error(error?.message || 'We could not verify the booking. Please retry with this hold.');
+      payment.remember(null);
       void notify('/send-booking-email', { bookingId: booking.id });
-
-      const success: BookingSuccess = {
-        reference: bookingReference(booking),
-        service: service.title,
-        date: draft.date,
-        dateDisplay: formatDateLong(draft.date),
-        startTime,
-        endTime,
-        time: `${formatTime(startTime)} – ${formatTime(endTime)}`,
-        hours,
-        total,
-        downpayment,
-        balance: total - downpayment,
-        location: row.location,
-        email: user.email,
-      };
-
-      setConfirmOpen(false);
-      setDraft(EMPTY_DRAFT);
-      setReference('');
-      setReceipt(null);
-      try {
-        sessionStorage.removeItem(DRAFT_KEY);
-      } catch {
-        /* ignore */
-      }
       availability.reload();
-      onSuccess(success);
+      countStep('submitted',service.id);
+      finish(booking);
     } catch (error) {
-      toast.error('Booking not submitted', { description: errorMessage(error) });
+      countStep('retry_failed',service.id); setConfirmOpen(false); setHoldError('If you already paid, keep your reference and do not send money again. ' + errorMessage(error)); payment.retry();
     } finally {
       submittingRef.current = false;
       setSubmitting(false);
@@ -461,7 +482,7 @@ export default function Contact({ user, availability, prefill, onSuccess, onRequ
         <header className="section-head">
           <p className="eyebrow">Book a session</p>
           <h2 className="section-title">Reserve your date</h2>
-          <p className="section-lead">See open dates, get your price instantly and lock in your slot with a GCash downpayment. It takes about three minutes.</p>
+          <p className="section-lead">Choose your session and check the price. Sign in to hold a time before paying with GCash.</p>
         </header>
 
         <div className="booking-layout">
@@ -473,7 +494,7 @@ export default function Contact({ user, availability, prefill, onSuccess, onRequ
               </div>
             )}
 
-            <fieldset className="booking-step" disabled={isTeam} data-field="serviceId">
+            <fieldset className="booking-step" disabled={isTeam || payment.active} data-field="serviceId">
               <legend>
                 <span className="step-num">1</span> Choose a service
               </legend>
@@ -494,15 +515,15 @@ export default function Contact({ user, availability, prefill, onSuccess, onRequ
               {errors.serviceId && <p className="field-error">{errors.serviceId}</p>}
             </fieldset>
 
-            <fieldset className="booking-step" disabled={isTeam}>
+            <fieldset className="booking-step" disabled={isTeam || payment.active}>
               <legend>
                 <span className="step-num">2</span> Pick a date and time
               </legend>
               <div className="datetime-grid">
-                <div data-field="date">
-                  <BookingCalendar value={draft.date} onChange={(date) => update({ date, start: null })} availability={availability} />
+                <div id="open-dates" tabIndex={-1} data-field="date">
+                  <BookingCalendar value={draft.date} onChange={(date) => update({ date, start: null })} availability={availability} disabled={availability.status !== 'ready'} />
                   {availability.status === 'error' && (
-                    <p className="field-hint">We could not load live availability right now. You can still request a date and we will confirm it.</p>
+                    <p className="field-hint">We could not load live availability right now. Your draft is saved. Retry before you pay. <button type="button" className="btn-link" onClick={availability.reload}>Retry availability</button></p>
                   )}
                   {errors.date && <p className="field-error">{errors.date}</p>}
                 </div>
@@ -631,11 +652,23 @@ export default function Contact({ user, availability, prefill, onSuccess, onRequ
               </div>
             </fieldset>
 
-            <fieldset className="booking-step" disabled={isTeam || !ready} ref={payRef} tabIndex={-1} aria-label="Step 4: Secure your slot">
+            <fieldset className="booking-step" disabled={isTeam} data-field="hold" ref={payRef} tabIndex={-1} aria-label="Step 4: Secure your slot">
               <legend>
                 <span className="step-num">4</span> Secure your slot
               </legend>
-              {!ready ? (
+              {payment.hold && <div className="notice"><div><strong>{payment.active ? 'Payment hold until ' + new Date(payment.hold.expires_at).toLocaleTimeString('en-PH',{timeZone:'Asia/Manila',hour:'numeric',minute:'2-digit'}) + ' Manila time' : 'This payment hold has ended'}</strong>
+                <p>Hold reference: {payment.hold.id}</p>
+                <details><summary>Already transferred and need help?</summary>
+                  <p>Please keep your receipt and pay only once. Send the transaction reference to the studio for manual reconciliation.</p>
+                  <label>GCash transaction reference<input maxLength={40} value={reference} onChange={e=>setReference(e.target.value)} /></label>
+                  <button type="button" className="btn btn-secondary" disabled={holdBusy || reference.trim().length<6 || !!caseNumber} onClick={reportTransfer}>Report my transfer</button>
+                  {caseNumber && <p role="status">The studio received your report. Case {caseNumber}. We will contact you by email.</p>}
+                  <a href={'mailto:'+STUDIO.email+'?subject='+encodeURIComponent('Payment help for hold '+payment.hold.id)}>Email the studio</a>
+                </details>
+                <button type="button" className="btn-link" disabled={holdBusy || submitting} onClick={release}>I have not paid · release this hold</button></div></div>}
+              {availability.status === 'ready' && availability.rules.review_hours && <p className="field-hint">Studio review target: within {availability.rules.review_hours} hours of submission.</p>}
+              {holdError && <p role="alert" className="field-error">{holdError}</p>}
+              {payment.checking ? <p role="status">Checking your reservation…</p> : payment.problem ? <p role="alert">{payment.problem} <button type="button" onClick={payment.retry}>Retry</button></p> : !ready ? (
                 <p className="field-hint">Choose a service, date and time first. Your downpayment amount will appear here.</p>
               ) : isGuest ? (
                 <div className="auth-cta">
@@ -653,6 +686,9 @@ export default function Contact({ user, availability, prefill, onSuccess, onRequ
                     </button>
                   </div>
                 </div>
+              ) : !canPay ? (
+                <div><p>Check availability and hold your time for 15 minutes before sending a deposit.</p>
+                {!payment.hold && <button type="button" className="btn btn-primary" disabled={holdBusy} onClick={reserve}>{holdBusy ? 'Checking…' : 'Hold this time for payment'}</button>}</div>
               ) : (
                 <div className="gcash-grid">
                   <div className="gcash-pay">
@@ -743,14 +779,15 @@ export default function Contact({ user, availability, prefill, onSuccess, onRequ
 
             <button type="submit" className="btn btn-primary btn-lg btn-block" disabled={isTeam || submitting} ref={submitRef}>
               {submitting ? <LoaderCircle size={20} className="spin" /> : <CalendarCheck size={20} />}
-              {isGuest ? 'Continue to reserve' : 'Review & submit booking'}
+              {isGuest ? 'Continue to reserve' : canPay ? 'Review & submit booking' : 'Check payment hold'}
             </button>
             <p className="form-footnote">
-              <ShieldCheck size={14} aria-hidden="true" /> Your date is held once we verify your downpayment. We confirm by email.
+              <ShieldCheck size={14} aria-hidden="true" /> The studio reviews your submitted receipt and confirms the booking in your account and by email.
             </p>
           </form>
 
           <aside className="booking-aside">
+            <Inquiry serviceId={service?.id} />
             <div className="summary-aside">{summary}</div>
             <div className="contact-card">
               <h3>Prefer to talk first?</h3>
@@ -789,7 +826,7 @@ export default function Contact({ user, availability, prefill, onSuccess, onRequ
           <div><dt>Location</dt><dd>{draft.location}</dd></div>
           <div><dt>Total</dt><dd>{formatPesoExact(total)}</dd></div>
           <div><dt>Downpayment sent</dt><dd>{formatPesoExact(downpayment)} · Ref {reference}</dd></div>
-          <div><dt>Balance on shoot day</dt><dd>{formatPesoExact(total - downpayment)} + transportation (if any)</dd></div>
+          <div><dt>Balance on shoot day</dt><dd>{formatPesoExact(total - downpayment)} after verification, plus agreed travel costs</dd></div>
         </dl>
         <label className="checkbox checkbox-block agreement-box">
           <input type="checkbox" checked={bookingAgreed} aria-describedby="booking-agreement-help" onChange={(event) => setBookingAgreed(event.target.checked)} />

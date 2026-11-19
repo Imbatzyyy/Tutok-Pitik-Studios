@@ -44,7 +44,7 @@ export default function SuccessModal({ booking, onClose, onViewBookings }: Succe
       className="success-modal"
       icon={<CircleCheck size={26} />}
       title="Booking request received"
-      description={`We sent a copy to ${booking.email}. We will check your GCash downpayment and confirm your date by email.`}
+      description={`Your request is saved. An acknowledgment is queued for ${booking.email}. You can track the studio’s decision in your account.`}
       footer={
         <>
           <a className="btn btn-ghost" href={calendarLink(booking)} target="_blank" rel="noopener noreferrer">
@@ -69,7 +69,7 @@ export default function SuccessModal({ booking, onClose, onViewBookings }: Succe
         <div><dt>Time</dt><dd>{booking.time}</dd></div>
         <div><dt>Location</dt><dd>{booking.location}</dd></div>
         <div><dt>Downpayment submitted</dt><dd>{formatPesoExact(booking.downpayment)}</dd></div>
-        <div><dt>Balance on shoot day</dt><dd>{formatPesoExact(booking.balance)} + transportation (if any)</dd></div>
+        <div><dt>Balance if deposit is verified</dt><dd>{formatPesoExact(booking.balance)} + transportation (if any)</dd></div>
       </dl>
       <ol className="next-steps">
         <li><strong>We review your payment</strong> and confirm by email.</li>

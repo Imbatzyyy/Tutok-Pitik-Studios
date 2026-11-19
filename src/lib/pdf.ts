@@ -45,9 +45,12 @@ async function createDocument(title:string,subtitle:string,landscape=false){
 export async function buildBookingReceipt(booking:NormalizedBooking){
  const p=await createDocument('Booking receipt',`Reference ${booking.receiptNumber}  |  Issued ${date(booking.receiptIssuedAt||Date.now())}  |  Times in Manila`);
  const paid=Number(booking.raw.paid_amount??(booking.paymentStatus==='verified'?booking.downpaymentAmount:0)),refund=Number(booking.raw.refunded_amount||0);
- p.cards([['Session total',php(booking.totalAmount)],['Verified payments',php(paid)],['Outstanding',php(booking.remainingBalance)]]);
+ const pending=booking.paymentStatus==='submitted' && !paid;
+ const balanceLabel=pending?'Balance if deposit is verified':'Remaining balance';
+ const balance=booking.status==='cancelled'?'Session cancelled':php(pending ? Math.max(0,booking.totalAmount-booking.downpaymentAmount) : booking.remainingBalance);
+ p.cards([['Session total',php(booking.totalAmount)],['Verified payments',php(paid)],[balanceLabel,balance]]);
  p.section('Your photography session',['Detail','Information'],[['Client',`${booking.fullName}\n${booking.email||'-'}`],['Service',booking.service],['Schedule',`${booking.dateDisplay}\n${booking.time}`],['Location',booking.location||'-'],['Reservation',statusLabel(booking.status)],['Gallery progress',booking.photoStatus?photoLabel(booking.photoStatus):'-']],{columnStyles:{0:{cellWidth:42,fontStyle:'bold'}}});
- p.section('Payment summary',['Description','Amount'],[[`Photography (${booking.durationHours} hours x ${php(booking.serviceRate)})`,php(booking.baseSubtotal)],['Transportation',php(booking.transportationFee)],['Session total',php(booking.totalAmount)],['Verified payments received',php(paid)],['Recorded refunds',php(refund)],['Outstanding balance',php(booking.remainingBalance)]],{columnStyles:{1:{cellWidth:48,halign:'right'}}});
+ p.section('Payment summary',['Description','Amount'],[[`Photography (${booking.durationHours} hours x ${php(booking.serviceRate)})`,php(booking.baseSubtotal)],['Transportation',php(booking.transportationFee)],['Session total',php(booking.totalAmount)],['Verified payments received',php(paid)],['Recorded refunds',php(refund)],[balanceLabel,balance]],{columnStyles:{1:{cellWidth:48,halign:'right'}}});
  if(booking.driveLink)p.section('Gallery delivery',['Access','Private gallery'],[['Gallery link',booking.driveLink]],{columnStyles:{0:{cellWidth:42}}});
  p.note('Booking and studio payment record. Only payments verified by the studio are shown as received. Keep this document and any gallery link private.');return p.finish();
 }

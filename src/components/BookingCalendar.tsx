@@ -23,7 +23,8 @@ const STATE_LABEL: Record<DayState, string> = {
 export default function BookingCalendar({ value, onChange, availability, disabled }: BookingCalendarProps) {
   const first = earliestBookableDate();
   const last = latestBookableDate();
-  const initial = value ? new Date(`${value}T00:00:00`) : first;
+  const saved = value ? new Date(`${value}T00:00:00`) : first;
+  const initial = saved >= first && saved <= last ? saved : first;
   const [view, setView] = useState({ year: initial.getFullYear(), month: initial.getMonth() });
 
   const days = useMemo(() => {
@@ -68,9 +69,9 @@ export default function BookingCalendar({ value, onChange, availability, disable
         </button>
       </div>
 
-      <div className="calendar-grid" role="grid" aria-label={`Dates in ${monthLabel}`}>
+      <div className="calendar-grid" role="group" aria-label={`Dates in ${monthLabel}`}>
         {WEEKDAYS.map((weekday) => (
-          <span key={weekday} className="calendar-weekday" role="columnheader">
+          <span key={weekday} className="calendar-weekday" aria-hidden="true">
             {weekday}
           </span>
         ))}
@@ -79,7 +80,6 @@ export default function BookingCalendar({ value, onChange, availability, disable
             <button
               key={cell.key}
               type="button"
-              role="gridcell"
               className={`calendar-day is-${cell.state} ${value === cell.key ? 'is-selected' : ''}`}
               disabled={disabled || !['open', 'limited'].includes(cell.state)}
               aria-pressed={value === cell.key}

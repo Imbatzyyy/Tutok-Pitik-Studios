@@ -21,7 +21,10 @@ import { toDateKey } from './lib/format';
 import { scrollToSection } from './lib/scroll';
 import { GUEST_USER, InactiveAccountError, resolveCustomerSession, type SessionUser } from './lib/session';
 import { isDemoMode, supabase } from './lib/supabase';
+import { clearBookingDrafts } from './lib/booking-hold';
 import { clearBookingResume } from './lib/booking-resume';
+import { findService } from './content/site';
+import { askStudio } from './components/Inquiry';
 import { HOME, parseRoute, type SiteRoute } from './lib/routes';
 import NotFound from './components/NotFound';
 
@@ -43,8 +46,18 @@ function Site() {
   const [authReady, setAuthReady] = useState(false);
   const [auth, setAuth] = useState<{ open: boolean; view: AuthView; intent?: 'booking' }>(() => ({ open: new URLSearchParams(window.location.search).get('signin') === '1', view: 'signin' }));
   const [route, setRoute] = useState<SiteRoute>(() => parseRoute(window.location.pathname) || HOME);
-  const [prefill, setPrefill] = useState<BookingPrefill | null>(null);
+  const [prefill, setPrefill] = useState<BookingPrefill | null>(() => {
+    const params=new URLSearchParams(location.search);
+    const service=findService(params.get('service'));
+    const hours=Number(params.get('hours'));
+    return service ? {serviceId:service.id,hours:service.packages.some(p=>p.hours===hours)?hours:undefined,nonce:Date.now()} : null;
+  });
   const availability = useAvailability();
+  useEffect(()=>{
+    if(!authReady)return;
+    if(location.hash==='#ask-studio') askStudio(findService(new URLSearchParams(location.search).get('service'))?.id);
+    else if(location.hash==='#contact' || location.hash==='#open-dates') scrollToSection(location.hash);
+  },[authReady]);
   const routeRef = useRef(route);
   routeRef.current = route;
   const authSucceeded = useRef(false);
@@ -129,12 +142,14 @@ function Site() {
 
   useEffect(() => {
     let cancelled = false;
+    let authRevision = 0;
     const apply = async (authUser: any) => {
+      const revision = ++authRevision;
       try {
         const resolved = await resolveCustomerSession(authUser);
-        if (!cancelled) setUser(resolved);
+        if (!cancelled && authRevision === revision) setUser(resolved);
       } catch (error) {
-        if (cancelled) return;
+        if (cancelled || authRevision !== revision) return;
         setUser(GUEST_USER);
         if (error instanceof InactiveAccountError) toast.error(error.message, { id: 'inactive-account' });
       }
@@ -152,7 +167,7 @@ function Site() {
 
     const { data: { subscription } } = supabase.auth.onAuthStateChange((event, session) => {
       if (cancelled) return;
-      if (event === 'SIGNED_OUT') setUser(GUEST_USER);
+      if (event === 'SIGNED_OUT') { ++authRevision; setSuccess(null); clearBookingDrafts(); setUser(GUEST_USER); }
       else if (session?.user && (event === 'SIGNED_IN' || event === 'USER_UPDATED')) void apply(session.user);
     });
 
@@ -202,6 +217,7 @@ function Site() {
   };
 
   const handleLogout = async () => {
+    clearBookingDrafts();
     leaveView();
     try {
       await supabase.auth.signOut({ scope: 'local' });
@@ -236,22 +252,23 @@ function Site() {
       />
 
       <main>
-        <Hero nextOpenDate={nextOpenDate} onBook={() => goToBooking()} />
+        <Hero nextOpenDate={nextOpenDate} onBook={() => scrollToSection('open-dates')} />
         <StatsBar />
         <Portfolio items={portfolio} onOpen={(items, index) => setLightbox({ items, index })} />
-        <Services items={portfolio} onBook={(serviceId, hours) => goToBooking(serviceId, hours)} />
+        <Services deliveryDays={availability.rules.delivery_days} items={portfolio} onBook={(serviceId, hours) => goToBooking(serviceId, hours)} />
         <Process onBook={() => goToBooking()} />
         <About />
         <Testimonials />
         <FAQ />
-        <Contact
+        {authReady && <Contact key={user.id}
           user={user}
           availability={availability}
           prefill={prefill}
+          onPrefillUsed={()=>setPrefill(null)}
           onSuccess={setSuccess}
           onRequireAuth={(view) => openAuth(view, 'booking')}
           onUserUpdated={setUser}
-        />
+        />}
       </main>
 
       <Footer onBook={(serviceId) => goToBooking(serviceId)} />
@@ -317,8 +334,8 @@ export default function App() {
   if (['/auth/google', '/auth/callback'].includes(window.location.pathname)) {
     return <Suspense fallback={<main className="reset-page" role="status">Loading secure sign-in…</main>}><GoogleAuthPage /></Suspense>;
   }
-  if (['/privacy', '/terms'].includes(window.location.pathname)) {
-    return <Suspense fallback={null}><PolicyPage type={window.location.pathname === '/privacy' ? 'privacy' : 'terms'} /></Suspense>;
+  if (['/privacy', '/terms'].includes(window.location.pathname.replace(/\/$/,''))) {
+    return <Suspense fallback={null}><PolicyPage type={window.location.pathname.startsWith('/privacy') ? 'privacy' : 'terms'} /></Suspense>;
   }
   if (window.location.pathname === '/reset-password') {
     return (

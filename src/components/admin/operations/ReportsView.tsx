@@ -1,3 +1,4 @@
+import ClientExperience from './ClientExperience';
 import { useState } from 'react';
 import { toast } from 'sonner';
 import { Download, FileText } from 'lucide-react';
@@ -84,6 +85,7 @@ export default function ReportsView({ revision }: { revision: number }) {
         }
       />
 
+      <ClientExperience revision={revision}/>
       <section className="ops-panel ops-filters" aria-label="Report period">
         <div className="ops-chips ops-chips-tight" role="group" aria-label="Quick periods">
           {ranges.map(([title, start, end]) => (

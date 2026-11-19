@@ -1416,7 +1416,7 @@
 
 .about-badge span {
     font-size: 13px;
-    opacity: 0.85;
+    color: white;
 }
 
 .about-copy p {
@@ -1860,9 +1860,7 @@
 .dot.is-limited { background: var(--warning); }
 .dot.is-full { background: var(--danger); }
 
-.calendar.is-disabled {
-    opacity: 0.5;
-}
+.calendar.is-disabled .calendar-day { cursor: default; }
 
 .datetime-grid {
     display: grid;
@@ -4764,3 +4762,17 @@ a.contact-row:hover {
     gap: 10px;
     margin-top: 28px;
 }
+#open-dates, #ask-studio { scroll-margin-top: 6rem; }
+.inquiry summary { cursor:pointer; font-weight:700; }
+.inquiry form, .inquiry label { display:grid; gap:.6rem; }
+.inquiry form { margin-top:1rem; gap:1rem; }
+.inquiry input, .inquiry select, .inquiry textarea { width:100%; color:inherit; background:#141414; border:1px solid #777; border-radius:.55rem; padding:.65rem; }
+.booking-step .notice { overflow-wrap:anywhere; }
+.studio-story .btn-primary, .App .about-badge, .App .btn-primary, .App .package-flag, .App .site-nav-cta, .App .step-num { background-color:#bb2938; color:white; }
+.App .calendar-day:focus-visible { outline:3px solid white; outline-offset:2px; }
+.studio-story { background:#101010; color:#f8f5f1; }
+.studio-story main { max-width:64rem; padding-block:3rem; }
+.studio-story h1 { font-size:clamp(2.2rem,6vw,4.6rem); line-height:1.06; margin-block:.5rem 1rem; }
+.studio-story h2,.studio-story p,.studio-story footer { margin-block:1.2rem; }
+.studio-story section>img { width:100%; max-height:64vh; object-fit:contain; background:#080808; border-radius:.75rem; margin-block:1.4rem; }
+.studio-story .eyebrow { margin-top:2.5rem; }

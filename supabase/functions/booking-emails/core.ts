@@ -42,7 +42,10 @@ export function emailContent(job: any) {
     ["Transportation included", money(b.transportation_fee)],
   ];
   if (b.notice) rows.push(["Update",b.notice]);
-  if (b.remaining_balance!==undefined)rows.push(["Outstanding balance",money(b.remaining_balance)]);
+  if (["customer_requested","studio_requested"].includes(job.kind) && b.total_price != null) {
+    const deposit = Math.max(0, Number(b.total_price) - Number(b.transportation_fee || 0)) / 2;
+    rows.push(["Deposit submitted for review",money(deposit)],["Balance if deposit is verified",money(Number(b.total_price)-deposit)]);
+  } else if (job.kind !== "booking_cancelled" && b.status !== "cancelled" && b.remaining_balance!==undefined)rows.push(["Outstanding balance",money(b.remaining_balance)]);
   if (b.delivery_due)rows.push(["Delivery due",b.delivery_due]);
   if (ownerReminder) {
     rows.splice(5); // Keep repeat alerts brief; private notes and contact details stay in the workspace.
@@ -58,14 +61,14 @@ export function emailContent(job: any) {
     heading,
     message,
     ...rows.map(([k, v]) => `${k}: ${String(v ?? "")}`),
-    `Open ${studio ? "the admin dashboard" : "Profile → Bookings"}: ${studio ? `${SITE}/admin/bookings/${b.id}` : `${SITE}/account/bookings`}`,
+    `Open ${studio ? "the admin dashboard" : "Profile → Bookings"}: ${studio ? `${SITE}/admin/bookings/${b.id}` : `${SITE}/account/bookings?booking=${encodeURIComponent(b.id)}`}`,
     `Questions? ${STUDIO_EMAIL}`,
   ].join("\n\n");
   const html = renderEmail({
     heading,
     preheader: message,
     contentHtml: `<p style="margin:0">${escapeHtml(message)}</p>${detailRows(rows)}`,
-    actionUrl: studio ? `${SITE}/admin/bookings/${b.id}` : `${SITE}/account/bookings`,
+    actionUrl: studio ? `${SITE}/admin/bookings/${b.id}` : `${SITE}/account/bookings?booking=${encodeURIComponent(b.id)}`,
     action: studio ? "Open studio dashboard" : "View my bookings",
     footnote: `Sign in ${studio ? "through the studio workspace" : "to your account"} to view this booking. Payment receipts are available only through your authenticated account.`,
   });

@@ -126,7 +126,7 @@ function BookingCard({ booking, onViewReceipt, onManage }: { booking: Normalized
       {cancelled ? (
         <div className="notice notice-danger">
           <Ban size={18} aria-hidden="true" />
-          <p>This booking was not approved{booking.paymentStatus === 'rejected' ? ' because the payment could not be verified' : ''}. Message us if you think this is a mistake, or submit a new booking.</p>
+          <p>This booking was cancelled. Your payment and refund status are shown below. Contact the studio with your reference if you need help.</p>
         </div>
       ) : (
         <ol className="bk-steps" aria-label="Booking progress">
@@ -149,13 +149,17 @@ function BookingCard({ booking, onViewReceipt, onManage }: { booking: Normalized
           {booking.transportationFee > 0 && <dd className="bk-money-sub">incl. {formatPesoExact(booking.transportationFee)} transportation</dd>}
         </div>
         <div>
-          <dt>Downpayment</dt>
+          <dt>Requested deposit</dt>
           <dd>{formatPesoExact(booking.downpaymentAmount)}</dd>
           <dd className={`bk-money-sub bk-pay text-${paymentTone(booking.paymentStatus)}`}>{paymentLabel(booking.paymentStatus)}</dd>
         </div>
         <div>
-          <dt>Due on shoot day</dt>
-          <dd>{formatPesoExact(booking.remainingBalance)}</dd>
+          <dt>Verified payments</dt><dd>{formatPesoExact(booking.raw.paid_amount ?? (booking.paymentStatus === 'verified' ? booking.downpaymentAmount : 0))}</dd>
+        </div>
+        {Number(booking.raw.refunded_amount) > 0 && <div><dt>Refunded</dt><dd>{formatPesoExact(booking.raw.refunded_amount)}</dd></div>}
+        <div>
+          <dt>{cancelled ? 'Session cancelled' : booking.paymentStatus === 'submitted' ? 'Balance if deposit is verified' : 'Remaining balance'}</dt>
+          <dd>{cancelled ? 'No shoot scheduled' : formatPesoExact(booking.paymentStatus === 'submitted' && !Number(booking.raw.paid_amount) ? Math.max(0,booking.totalAmount - booking.downpaymentAmount) : booking.remainingBalance)}</dd>
         </div>
       </dl>
 
@@ -185,6 +189,7 @@ function BookingCard({ booking, onViewReceipt, onManage }: { booking: Normalized
         </div>
       )}
 
+      {booking.photoStatus === 'delivered' && <p><a href={'mailto:'+STUDIO.email+'?subject='+encodeURIComponent('Optional feedback · '+booking.reference)}>Share feedback about your session</a> · We will ask your permission before publishing a review.</p>}
       <footer className="bk-actions">
         <button type="button" className="btn btn-sm bk-manage" onClick={() => onManage(booking.id)}>
           Manage booking <ChevronRight size={16} aria-hidden="true" />
@@ -320,8 +325,12 @@ export default function UserProfile({ isOpen, initialTab, user, catalog, onClose
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [isOpen, tab]);
   const [bookingRevision, setBookingRevision] = useState(0);
-  const [openBooking, setOpenBooking] = useState<string | null>(null);
+  const [openBooking, setOpenBooking] = useState<string | null>(() => {
+    const value=new URLSearchParams(location.search).get('booking');
+    return value && /^[a-f0-9-]{36}$/i.test(value) ? value : null;
+  });
   const live = useStudioLive(user.id, false, () => setBookingRevision((n) => n + 1), isOpen && isCustomer);
+  const [bookingsError,setBookingsError] = useState(false);
   const [bookings, setBookings] = useState<NormalizedBooking[] | null>(null);
   const [receipt, setReceipt] = useState<{ url: string; name: string } | null>(null);
   const [form, setForm] = useState({ firstName: user.firstName, lastName: user.lastName, phone: user.phone });
@@ -345,9 +354,9 @@ export default function UserProfile({ isOpen, initialTab, user, catalog, onClose
       const { data, error } = await supabase.from('bookings').select('*').eq('user_id', user.id).order('created_at', { ascending: false });
       if (cancelled) return;
       if (error) {
-        setBookings([]);
-        toast.error('Could not load your bookings', { description: error.message });
+        setBookingsError(true);
       } else {
+        setBookingsError(false);
         setBookings((data || []).map(normalizeBooking));
       }
     })();
@@ -558,7 +567,8 @@ export default function UserProfile({ isOpen, initialTab, user, catalog, onClose
 
         {tab === 'bookings' && isCustomer && (
           <div className="pf-panel">
-            {bookings === null ? (
+            {bookingsError && <div className="notice" role="alert">We could not refresh your bookings. {bookings?.length ? 'Showing the last available information.' : ''} <button type="button" className="btn-link" onClick={() => setBookingRevision(n => n+1)}>Retry</button></div>}
+            {bookingsError && !bookings?.length ? null : bookings === null ? (
               <div className="loading-row"><LoaderCircle size={20} className="spin" /> Loading your bookings…</div>
             ) : bookings.length === 0 ? (
               <div className="empty-state pf-empty">

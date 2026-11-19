@@ -43,9 +43,9 @@ export default function Footer({ onBook }: { onBook: (serviceId?: string) => voi
           <ul>
             {SERVICES.map((service) => (
               <li key={service.id}>
-                <button type="button" className="footer-link-btn" onClick={() => onBook(service.id)}>
+                <a href={'/services/'+service.id+'/'}>
                   {service.title}
-                </button>
+                </a>
               </li>
             ))}
           </ul>

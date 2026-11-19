@@ -93,6 +93,10 @@ for (const kind of [
   count += 6;
 }
 assert(emailContent(base).text.includes("does not confirm payment"));
+assert(emailContent(base).text.includes("Balance if deposit is verified: ₱2,500.00"));
+assert(emailContent(base).html.includes("/account/bookings?booking=" + base.booking_id));
+assert(!emailContent({...base,kind:"booking_cancelled",payload:{...base.payload,remaining_balance:5000}}).text.includes("Outstanding balance"));
+count += 3;
 count++;
 let requests = [];
 const fetcher = async (url, init) => {

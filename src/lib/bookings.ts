@@ -5,7 +5,7 @@ import { formatDateLong, formatPesoExact, formatTime, hoursLabel } from './forma
 export const BOOKING_META_MARKER = '\n\n---BOOKING_META---\n';
 
 export type BookingStatus = 'pending' | 'confirmed' | 'completed' | 'cancelled';
-export type PaymentStatus = 'submitted' | 'verified' | 'rejected';
+export type PaymentStatus = 'submitted' | 'verified' | 'rejected' | 'refunded' | 'refund_pending' | 'awaiting_proof';
 export type PhotoStatus = 'editing' | 'ready' | 'delivered';
 
 export const BOOKING_STATUSES: { value: BookingStatus; label: string; tone: string }[] = [
@@ -16,6 +16,9 @@ export const BOOKING_STATUSES: { value: BookingStatus; label: string; tone: stri
 ];
 
 export const PAYMENT_STATUSES: { value: PaymentStatus; label: string; tone: string }[] = [
+  { value: 'refunded', label: 'Refunded', tone: 'neutral' },
+  { value: 'refund_pending', label: 'Refund in progress', tone: 'warning' },
+  { value: 'awaiting_proof', label: 'Awaiting payment proof', tone: 'warning' },
   { value: 'submitted', label: 'Awaiting review', tone: 'warning' },
   { value: 'verified', label: 'Verified', tone: 'success' },
   { value: 'rejected', label: 'Rejected', tone: 'danger' },
@@ -161,7 +164,7 @@ export const normalizeBooking = (record: any): NormalizedBooking => {
     paymentReceiptUrl: meta.paymentReceiptUrl || '',
     paymentReceiptPath: meta.paymentReceiptPath || '',
     paymentReceiptName: meta.paymentReceiptName || '',
-    paymentStatus: record.payment_state ? (['paid','deposit_verified','partially_paid'].includes(record.payment_state)?'verified':record.payment_state==='rejected'?'rejected':'submitted') : (['submitted', 'verified', 'rejected'].includes(meta.paymentStatus) ? meta.paymentStatus : 'submitted') as PaymentStatus,
+    paymentStatus: record.payment_state ? (['paid','deposit_verified','partially_paid'].includes(record.payment_state)?'verified':['rejected','refunded','refund_pending','awaiting_proof'].includes(record.payment_state)?record.payment_state:'submitted') : (['submitted', 'verified', 'rejected'].includes(meta.paymentStatus) ? meta.paymentStatus : 'submitted') as PaymentStatus,
     paymentSubmittedAt: meta.paymentSubmittedAt || record.created_at,
     adminNote: record.client_note ?? meta.adminNote ?? '',
   };
