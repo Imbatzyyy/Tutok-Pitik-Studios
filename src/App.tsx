@@ -143,11 +143,16 @@ function Site() {
   useEffect(() => {
     let cancelled = false;
     let authRevision = 0;
+    let previousCustomer = '';
     const apply = async (authUser: any) => {
       const revision = ++authRevision;
       try {
         const resolved = await resolveCustomerSession(authUser);
-        if (!cancelled && authRevision === revision) setUser(resolved);
+        if (!cancelled && authRevision === revision) {
+          if (previousCustomer && previousCustomer !== resolved.id) { clearBookingDrafts(); setSuccess(null); }
+          previousCustomer = resolved.role === 'customer' ? resolved.id : '';
+          setUser(resolved);
+        }
       } catch (error) {
         if (cancelled || authRevision !== revision) return;
         setUser(GUEST_USER);
@@ -167,7 +172,7 @@ function Site() {
 
     const { data: { subscription } } = supabase.auth.onAuthStateChange((event, session) => {
       if (cancelled) return;
-      if (event === 'SIGNED_OUT') { ++authRevision; setSuccess(null); clearBookingDrafts(); setUser(GUEST_USER); }
+      if (event === 'SIGNED_OUT') { ++authRevision; previousCustomer=''; setSuccess(null); clearBookingDrafts(); setUser(GUEST_USER); }
       else if (session?.user && (event === 'SIGNED_IN' || event === 'USER_UPDATED')) void apply(session.user);
     });
 

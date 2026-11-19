@@ -147,7 +147,15 @@ export default function Contact({ user, availability, prefill, onPrefillUsed, on
     timeToHour(payment.hold?.start) === draft.start && timeToHour(payment.hold?.end) === endHour;
   const canPay = ready && held && !payment.checking && !payment.problem;
   async function reserve() {
-    if (!ready || !service || draft.start === null || !hours || !draft.date || holdBusy || payment.checking || payment.problem) return;
+    if (holdBusy || payment.checking || payment.problem) return;
+    if (!ready || !service || draft.start === null || !hours || !draft.date) {
+      const field = !service ? 'serviceId' : !slotKnown ? 'date' : draft.start === null ? 'start' : 'hours';
+      const hint = !service ? 'Choose your service first.' : availability.status !== 'ready' ? 'Retry live availability before paying.' : !slotKnown ? 'Choose an available date for your session.' : draft.start === null ? 'Choose an open start time.' : 'Choose your session duration.';
+      setErrors({[field]:hint});
+      setHoldError(hint);
+      goToField(field);
+      return;
+    }
     if (draft.location.trim().length < 8 || (needsPhone && !phoneLooksValid(draft.phone))) {
       const field = draft.location.trim().length < 8 ? 'location' : 'phone';
       setErrors({[field]:field === 'location' ? 'Enter the complete venue address.' : 'Enter a valid mobile number.'});

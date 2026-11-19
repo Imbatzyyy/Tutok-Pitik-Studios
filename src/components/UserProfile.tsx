@@ -189,7 +189,7 @@ function BookingCard({ booking, onViewReceipt, onManage }: { booking: Normalized
         </div>
       )}
 
-      {booking.photoStatus === 'delivered' && <p><a href={'mailto:'+STUDIO.email+'?subject='+encodeURIComponent('Optional feedback · '+booking.reference)}>Share feedback about your session</a> · We will ask your permission before publishing a review.</p>}
+      {(booking.photoStatus === 'delivered' || booking.raw.gallery_status === 'delivered') && <p><a href={'mailto:'+STUDIO.email+'?subject='+encodeURIComponent('Optional feedback · '+booking.reference)}>Share feedback about your session</a> · We will ask your permission before publishing a review.</p>}
       <footer className="bk-actions">
         <button type="button" className="btn btn-sm bk-manage" onClick={() => onManage(booking.id)}>
           Manage booking <ChevronRight size={16} aria-hidden="true" />

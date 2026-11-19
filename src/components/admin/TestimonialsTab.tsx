@@ -4,6 +4,7 @@ import { toast } from 'sonner';
 import Modal from '../common/Modal';
 import ConfirmDialog from '../common/ConfirmDialog';
 import { errorMessage, isMissingRelation } from '../../lib/api';
+import { SERVICES } from '../../content/site';
 import { initials } from '../../lib/format';
 import { compressImage, publicUrl, PORTFOLIO_BUCKET, randomId, uploadToBucket } from '../../lib/images';
 import { supabase } from '../../lib/supabase';
@@ -12,6 +13,7 @@ interface Testimonial {
   id: string;
   client_name: string;
   client_context: string;
+  service_id: string | null;
   quote: string;
   rating: number;
   photo_url: string;
@@ -22,6 +24,7 @@ interface Testimonial {
 const normalize = (row: any): Testimonial => ({
   id: String(row.id),
   client_name: row.client_name || '',
+  service_id: row.service_id || null,
   client_context: row.client_context || '',
   quote: row.quote || '',
   rating: Math.min(5, Math.max(1, Number(row.rating) || 5)),
@@ -223,6 +226,7 @@ function TestimonialForm({ row, nextOrder, onClose, onSaved }: { row: Testimonia
   const isNew = !row;
   const [name, setName] = useState(row?.client_name || '');
   const [context, setContext] = useState(row?.client_context || '');
+  const [serviceId,setServiceId] = useState(row?.service_id || '');
   const [quote, setQuote] = useState(row?.quote || '');
   const [rating, setRating] = useState(row?.rating || 5);
   const [photo, setPhoto] = useState(row?.photo_url || '');
@@ -258,6 +262,7 @@ function TestimonialForm({ row, nextOrder, onClose, onSaved }: { row: Testimonia
     const fields = {
       client_name: name.trim(),
       client_context: context.trim(),
+      service_id: serviceId || null,
       quote: quote.trim(),
       rating,
       photo_url: photo || null,
@@ -331,7 +336,9 @@ function TestimonialForm({ row, nextOrder, onClose, onSaved }: { row: Testimonia
           </div>
         </div>
         <div className="field">
-          <label htmlFor="tf-quote">What they said</label>
+          <label htmlFor="tf-service">Related service</label><select id="tf-service" value={serviceId} onChange={e=>setServiceId(e.target.value)}><option value="">Studio-wide review</option>{SERVICES.map(s=><option key={s.id} value={s.id}>{s.title}</option>)}</select>
+        </div>
+        <div className="field"><label htmlFor="tf-quote">What they said</label>
           <textarea id="tf-quote" rows={4} maxLength={500} value={quote} onChange={(event) => setQuote(event.target.value)} aria-invalid={Boolean(errors.quote) || undefined} />
           {errors.quote ? <span className="field-error">{errors.quote}</span> : <span className="field-hint">{quote.length}/500</span>}
         </div>

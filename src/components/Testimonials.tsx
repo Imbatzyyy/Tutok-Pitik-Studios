@@ -1,11 +1,13 @@
 import { useEffect, useState } from 'react';
 import { Quote, Star } from 'lucide-react';
 import { supabase } from '../lib/supabase';
+import { findService } from '../content/site';
 import { initials } from '../lib/format';
 
 export interface Testimonial {
   id: string;
   client_name: string;
+  service_id?: string | null;
   client_context?: string | null;
   quote: string;
   rating?: number | null;
@@ -65,6 +67,7 @@ export default function Testimonials() {
                 <div>
                   <strong>{item.client_name}</strong>
                   {item.client_context && <span>{item.client_context}</span>}
+                  {findService(item.service_id) && <a href={'/services/'+item.service_id+'/'}>{findService(item.service_id)?.title}</a>}
                 </div>
               </div>
             </li>
